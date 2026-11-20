@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orbital Arena</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <main>
+      <header><h1>Orbital Arena</h1><button id="reset" type="button">Скинути позицію</button></header>
+      <section class="arena" aria-label="Космічна арена">
+        <canvas id="arena" aria-label="Політ космічного корабля"></canvas>
+        <div id="hud"></div>
+      </section>
+      <footer><span><kbd>W</kbd> / <kbd>↑</kbd> тяга</span><span><kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd> поворот</span><span><kbd>R</kbd> скидання</span></footer>
+    </main>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
