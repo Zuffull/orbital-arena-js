@@ -1,7 +1,7 @@
 export function createInput(target) {
   const held = new Set();
   const pressed = new Set();
-  const controls = new Set(["KeyW", "KeyA", "KeyD", "KeyR", "ArrowUp", "ArrowLeft", "ArrowRight"]);
+  const controls = new Set(["KeyW", "KeyA", "KeyD", "KeyR", "KeyH", "Space", "ArrowUp", "ArrowLeft", "ArrowRight"]);
 
   function keydown(event) {
     if (!controls.has(event.code)) return;
