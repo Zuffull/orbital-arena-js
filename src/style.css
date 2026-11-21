@@ -13,3 +13,11 @@ button { cursor: pointer; font: inherit; }
 button:hover { background: #213b5d; }
 
 #status { position: absolute; right: 14px; top: 14px; padding: 7px 10px; background: #080e1ae6; border-radius: 8px; }
+
+.panel { margin-top: 16px; padding: 20px; border: 1px solid #334965; border-radius: 14px; background: #101d32; }
+#game { margin-top: 16px; }
+#loading-bar { width: min(100%, 400px); height: 12px; border-radius: 6px; }
+#status:empty { display: none; }
+form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+label { display: grid; gap: 4px; }
+input, select { padding: 6px 8px; min-height: 32px; border: 1px solid #435978; border-radius: 6px; background: #15253c; color: inherit; }
