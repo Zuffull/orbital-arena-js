@@ -2,8 +2,8 @@ import { createInput } from "./input.js";
 import { createLoop } from "./loop.js";
 import { createCanvas } from "./render/canvas.js";
 import { drawArena, drawHud, drawShip } from "./render/draw.js";
-import { interpolateShip, wrapShip } from "./sim/arena.js";
-import { createShip, integrate } from "./sim/ship.js";
+import { interpolateShip, wrapShip } from "../../shared/sim/arena.js";
+import { createShip, integrate } from "../../shared/sim/ship.js";
 
 const canvas = createCanvas(document.querySelector("#arena"));
 const hud = document.querySelector("#hud");
