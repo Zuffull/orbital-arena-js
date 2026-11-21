@@ -1,5 +1,5 @@
 import { drawEntity } from "./local-game.js";
-import { ARENA } from "./sim/arena.js";
+import { ARENA } from "../../shared/sim/arena.js";
 
 const columns = { ship: 0, bullet: 1, asteroid: 2 };
 
