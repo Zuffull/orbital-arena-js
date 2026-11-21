@@ -4,6 +4,11 @@ export function createShip() {
   return { x: ARENA.width / 2, y: ARENA.height / 2, vx: 0, vy: 0, angle: 0, thrust: false };
 }
 
+export function shotFrom(ship) {
+  const x = Math.cos(ship.angle), y = Math.sin(ship.angle);
+  return { x: ship.x + x * 20, y: ship.y + y * 20, vx: ship.vx + x * 560, vy: ship.vy + y * 560 };
+}
+
 export function integrate(ship, input, dt) {
   const angle = wrap(ship.angle + input.turn * 3.8 * dt, 2 * Math.PI);
   const acceleration = input.thrust ? 360 : 0;
