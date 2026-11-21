@@ -6,15 +6,19 @@
   "engines": {
     "node": ">=22.12"
   },
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
+    "dev": "npm run dev -w client",
+    "dev:server": "node --env-file-if-exists=.env server/index.js",
+    "build": "npm run build -w client",
+    "start": "npm run dev:server",
     "lint": "biome lint .",
     "format": "biome format --write ."
   },
   "devDependencies": {
-    "@biomejs/biome": "2.2.5",
-    "vite": "7.1.12"
+    "@biomejs/biome": "2.2.5"
   }
 }
