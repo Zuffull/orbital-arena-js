@@ -5,6 +5,7 @@ export function createInput(target) {
 
   function keydown(event) {
     if (!controls.has(event.code)) return;
+    if (event.target?.closest?.("input, textarea, select, [contenteditable]")) return;
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     event.preventDefault();
     if (!held.has(event.code) && !event.repeat) pressed.add(event.code);
