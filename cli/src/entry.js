@@ -3,6 +3,7 @@ import { createAudio } from "./audio.js";
 import { Lobby } from "./lobby.js";
 import { connectLobby } from "./lobby-view.js";
 import { startLocalGame } from "./local-game.js";
+import { connectRoomView } from "./room-view.js";
 import { createSpriteRenderer } from "./sprites.js";
 
 const params = new URLSearchParams(location.search);
@@ -11,6 +12,7 @@ const game = document.querySelector("#game");
 if (params.has("experiment")) {
   document.querySelector("#loading").hidden = true;
   document.querySelector("#leave").hidden = true;
+  document.querySelector("#room-panel").hidden = true;
   game.hidden = false;
   void import("./main.js");
 } else {
@@ -27,6 +29,7 @@ function setup() {
   const cancel = document.querySelector("#load-cancel");
   const leave = document.querySelector("#leave");
   const lobby = new Lobby();
+  const chat = connectRoomView(game);
   const events = new EventTarget();
   const sounds = ["fired", "hit", "exploded"];
   let failure = params.get("failure");
@@ -97,6 +100,7 @@ function setup() {
   window.addEventListener("pagehide", () => {
     controller?.abort();
     lobby.stop();
+    chat.leave();
     stopGame?.();
   }, { once: true });
   lobby.addEventListener("join", ({ detail }) => {
@@ -104,6 +108,7 @@ function setup() {
     lobbyPanel.hidden = true;
     game.hidden = false;
     document.querySelector("#room-title").textContent = `${detail.room.name} · ${detail.player}`;
+    chat.enter(detail.room, detail.player);
     stopGame = startLocalGame({
       arena: { ...resources.arena, ...detail.room.arena },
       renderEntity: createSpriteRenderer(resources.atlas),
@@ -111,6 +116,7 @@ function setup() {
     });
   });
   leave.addEventListener("click", () => {
+    chat.leave();
     stopGame?.();
     stopGame = undefined;
     game.hidden = true;
