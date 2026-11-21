@@ -36,7 +36,7 @@ export function pose(entity) {
   return { x: entity.pos.x, y: entity.pos.y, angle: entity.angle, thrust: entity.thrust };
 }
 
-export function startLocalGame({ onEvent = () => {}, renderEntity = drawEntity } = {}) {
+export function startLocalGame({ onEvent = () => {}, renderEntity = drawEntity, arena = {} } = {}) {
   const canvas = createCanvas(document.querySelector("#arena"));
   const hud = document.querySelector("#hud");
   const status = document.querySelector("#status");
@@ -47,9 +47,9 @@ export function startLocalGame({ onEvent = () => {}, renderEntity = drawEntity }
 
   function initialize() {
     world = new World();
-    world.populate();
+    world.populate(arena);
     world.addPlayer("player", 0, new Vector2(500, 300));
-    world.addPlayer("drone", 0, new Vector2(840, 300));
+    world.addPlayer("drone", 0, new Vector2(...(arena.opponent ?? [840, 300])));
     previous = new Map();
   }
 
