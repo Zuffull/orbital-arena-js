@@ -1,4 +1,0 @@
-[
-  { "id": "orbital", "name": "Орбітальна арена", "arena": {} },
-  { "id": "training", "name": "Тренувальний сектор", "arena": { "asteroids": 1, "opponent": [810, 370] } }
-]
