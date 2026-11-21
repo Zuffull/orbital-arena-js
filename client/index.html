@@ -37,6 +37,17 @@
         <div id="hud"></div>
         <div id="status"></div>
       </section>
+      <section id="room-panel" class="panel">
+        <h3>Чат кімнати</h3>
+        <p id="room-state" role="status"></p>
+        <p>Гравці: <span id="roster">—</span></p>
+        <ol id="chat-messages" aria-live="polite"></ol>
+        <form id="chat">
+          <label>Повідомлення <input name="message" maxlength="240" required /></label>
+          <button type="submit">Надіслати</button>
+        </form>
+        <p><a id="replay" hidden>Завантажити журнал NDJSON</a></p>
+      </section>
       <footer><span><kbd>W</kbd> / <kbd>↑</kbd> тяга</span><span><kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd> поворот</span><span><kbd>R</kbd> скидання</span><span><kbd>Space</kbd> постріл</span><span><kbd>H</kbd> самонаведення</span></footer>
       </section>
     </main>
