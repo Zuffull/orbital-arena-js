@@ -1,5 +1,5 @@
 import { ARENA, wrap } from "./arena.js";
-import { integrate } from "./ship.js";
+import { integrate, shotFrom } from "./ship.js";
 import { Vector2 } from "./vector.js";
 
 export class Entity {
@@ -56,8 +56,8 @@ export class Ship extends Entity {
   fire() {
     if (this.cooldown > 0) return null;
     this.cooldown = 0.22;
-    const direction = Vector2.fromAngle(this.angle);
-    const bullet = new Bullet(this.pos.add(direction.scale(20)), this.vel.add(direction.scale(560)), this.owner);
+    const shot = shotFrom({ x: this.pos.x, y: this.pos.y, vx: this.vel.x, vy: this.vel.y, angle: this.angle });
+    const bullet = new Bullet(new Vector2(shot.x, shot.y), new Vector2(shot.vx, shot.vy), this.owner);
     bullet.angle = this.angle;
     return bullet;
   }
