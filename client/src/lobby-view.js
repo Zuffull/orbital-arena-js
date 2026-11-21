@@ -6,7 +6,7 @@ export function connectLobby(lobby, panel) {
 
   lobby.addEventListener("rooms", ({ detail }) => {
     const selected = room.value;
-    room.replaceChildren(...detail.map(item => new Option(item.name, item.id)));
+    room.replaceChildren(...detail.map(item => new Option(item.players === undefined ? item.name : item.name + " · " + item.players + "/8", item.id)));
     if (detail.some(item => item.id === selected)) room.value = selected;
     join.disabled = !detail.length;
     status.textContent = detail.length ? "" : "Кімнат поки немає.";
