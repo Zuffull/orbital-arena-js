@@ -1,4 +1,4 @@
-import { ARENA } from "../sim/arena.js";
+import { ARENA } from "../../../shared/sim/arena.js";
 
 export function drawArena(ctx) {
   ctx.fillStyle = "#101e34";
