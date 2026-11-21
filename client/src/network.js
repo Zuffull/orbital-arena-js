@@ -1,51 +1,83 @@
-const version = 1;
+import { decodeSnapshot, encodeInput } from "../../shared/codec.js";
+import { VERSION as v } from "../../shared/protocol.js";
+
 const permanent = new Set([1003, 1008, 1009]);
+const encoder = new TextEncoder();
 
 export function connectRoom(room, name, receive) {
+  const params = new URLSearchParams(location.search);
+  const binary = !params.has("json");
+  const settings = new URLSearchParams();
+  for (const key of ["lag", "jitter", "loss"]) if (params.has(key)) settings.set(key, params.get(key));
   const queue = [];
-  let socket;
-  let retryTimer;
-  let sendTimer;
-  let attempts = 0;
-  let joined = false;
-  let stopped = false;
+  const probes = new Map();
+  let socket, retryTimer, sendTimer, probeTimer;
+  let attempts = 0, nonce = 0, bytes = 0, bps = 0, from = performance.now();
+  let joined = false, stopped = false, rtt = null;
+
+  function send(payload) {
+    socket.send(payload);
+    bytes += typeof payload === "string" ? encoder.encode(payload).byteLength : payload.byteLength;
+  }
 
   function flush() {
     if (!joined || !queue.length || sendTimer || socket.readyState !== WebSocket.OPEN) return;
     sendTimer = setTimeout(() => {
       sendTimer = undefined;
       if (!joined || socket.readyState !== WebSocket.OPEN) return;
-      if (socket.bufferedAmount < 16_384) socket.send(queue.shift());
+      if (socket.bufferedAmount < 16_384) send(queue.shift());
       flush();
     }, 150);
   }
 
+  function probe() {
+    if (!joined || socket.readyState !== WebSocket.OPEN) return;
+    if (probes.size >= 4) probes.delete(probes.keys().next().value);
+    probes.set(++nonce, performance.now());
+    send(JSON.stringify({ v, type: "probe", nonce }));
+  }
+
+  function disconnect() {
+    joined = false;
+    clearTimeout(sendTimer);
+    clearInterval(probeTimer);
+    sendTimer = undefined;
+    probes.clear();
+  }
+
   function connect() {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-    const connection = new WebSocket(scheme + "//" + location.host + "/ws");
+    const connection = new WebSocket(scheme + "//" + location.host + "/ws?" + settings);
+    connection.binaryType = "arraybuffer";
     socket = connection;
     receive({ type: "status", text: "Підключення…" });
-
     connection.addEventListener("open", () => {
-      connection.send(JSON.stringify({ v: version, type: "join", room, name }));
+      send(JSON.stringify({ v, type: "join", room, name, codec: binary ? "bin" : "json" }));
     });
-    connection.addEventListener("message", event => {
+    connection.addEventListener("message", ({ data }) => {
       if (stopped || connection !== socket) return;
       let packet;
-      try { packet = JSON.parse(event.data); } catch { return; }
-      if (packet?.v !== version) return;
+      try {
+        bytes += typeof data === "string" ? encoder.encode(data).byteLength : data.byteLength;
+        packet = typeof data === "string" ? JSON.parse(data) : decodeSnapshot(data);
+      } catch { return; }
+      if (packet?.v !== v) return;
       if (packet.type === "joined") {
         joined = true;
         attempts = 0;
+        probe();
+        probeTimer = setInterval(probe, 1000);
         flush();
+      }
+      if (packet.type === "probe" && probes.has(packet.nonce)) {
+        rtt = performance.now() - probes.get(packet.nonce);
+        probes.delete(packet.nonce);
       }
       receive(packet);
     });
     connection.addEventListener("close", event => {
       if (stopped || connection !== socket) return;
-      joined = false;
-      clearTimeout(sendTimer);
-      sendTimer = undefined;
+      disconnect();
       if (permanent.has(event.code)) {
         stopped = true;
         queue.length = 0;
@@ -60,17 +92,30 @@ export function connectRoom(room, name, receive) {
 
   connect();
   return {
+    sendInput(input) {
+      if (!joined || socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > 16_384) return false;
+      send(binary ? encodeInput(input) : JSON.stringify({ ...input, v }));
+      return true;
+    },
     send(text) {
       if (stopped || queue.length >= 24) return false;
-      queue.push(JSON.stringify({ v: version, type: "chat", text }));
+      queue.push(JSON.stringify({ v, type: "chat", text }));
       flush();
       return true;
     },
+    metrics() {
+      const now = performance.now();
+      if (now - from >= 1000) {
+        bps = Math.round(bytes * 1000 / (now - from));
+        bytes = 0;
+        from = now;
+      }
+      return { rtt, bps };
+    },
     close() {
       stopped = true;
-      joined = false;
+      disconnect();
       clearTimeout(retryTimer);
-      clearTimeout(sendTimer);
       queue.length = 0;
       socket.close(1000, "Leave");
     },
