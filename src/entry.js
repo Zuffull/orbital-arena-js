@@ -60,7 +60,7 @@ function setup() {
       const manifest = await withRetry(active => loadJson("/assets/manifest.json", active), signal);
       const assets = manifest.map(entry => {
         if (faults === "404" && entry.type === "image") return { ...entry, url: "/assets/missing-atlas.txt" };
-        if (faults === "json" && entry.type === "json") return { ...entry, url: "/assets/broken.json" };
+        if (faults === "json" && entry.type === "json") return { ...entry, url: "/assets/broken-json.txt" };
         return entry;
       });
       const assetSignal = faults === "timeout" ? AbortSignal.any([signal, AbortSignal.timeout(0)]) : signal;
