@@ -29,13 +29,17 @@
       <section id="game" hidden>
       <header>
         <h2 id="room-title">Ігрова арена</h2>
-        <button id="reset" type="button">Скинути позицію</button>
+        <button id="reset" type="button" hidden>Скинути позицію</button>
         <button id="leave" type="button">Вийти в лобі</button>
       </header>
       <section class="arena" aria-label="Космічна арена">
         <canvas id="arena" aria-label="Політ космічного корабля"></canvas>
         <div id="hud"></div>
         <div id="status"></div>
+      </section>
+      <section id="network-panel" class="panel">
+        <output id="netgraph" aria-label="Мережеві показники"></output>
+        <label>Інтерполяція <input id="interpolation" type="range" min="35" max="250" value="100" /></label>
       </section>
       <section id="room-panel" class="panel">
         <h3>Чат кімнати</h3>
@@ -48,7 +52,7 @@
         </form>
         <p><a id="replay" hidden>Завантажити журнал NDJSON</a></p>
       </section>
-      <footer><span><kbd>W</kbd> / <kbd>↑</kbd> тяга</span><span><kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd> поворот</span><span><kbd>R</kbd> скидання</span><span><kbd>Space</kbd> постріл</span><span><kbd>H</kbd> самонаведення</span></footer>
+      <footer><span><kbd>W</kbd> / <kbd>↑</kbd> тяга</span><span><kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd> поворот</span><span><kbd>Space</kbd> постріл</span><span><kbd>H</kbd> самонаведення</span></footer>
       </section>
     </main>
     <script type="module" src="./src/entry.js"></script>
