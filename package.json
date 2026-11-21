@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.18"
   },
   "workspaces": [
     "client",
@@ -13,13 +13,18 @@
   ],
   "scripts": {
     "dev": "npm run dev -w client",
-    "dev:server": "node --env-file-if-exists=.env server/index.js",
+    "dev:server": "node --env-file-if-exists=.env server/index.ts",
     "build": "npm run build -w client",
     "start": "npm run dev:server",
     "lint": "biome lint .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.2.5"
+    "@biomejs/biome": "2.2.5",
+    "typescript": "5.9.3",
+    "@types/node": "24.10.1",
+    "@types/ws": "8.18.0"
   }
 }
