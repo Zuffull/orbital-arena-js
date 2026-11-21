@@ -2,7 +2,7 @@ import { loadAll, loadJson, withRetry } from "./assets.js";
 import { createAudio } from "./audio.js";
 import { Lobby } from "./lobby.js";
 import { connectLobby } from "./lobby-view.js";
-import { startLocalGame } from "./local-game.js";
+import { startOnline } from "./online-game.js";
 import { connectRoomView } from "./room-view.js";
 import { createSpriteRenderer } from "./sprites.js";
 
@@ -13,7 +13,9 @@ if (params.has("experiment")) {
   document.querySelector("#loading").hidden = true;
   document.querySelector("#leave").hidden = true;
   document.querySelector("#room-panel").hidden = true;
+  document.querySelector("#network-panel").hidden = true;
   game.hidden = false;
+  document.querySelector("#reset").hidden = false;
   void import("./main.js");
 } else {
   setup();
@@ -108,12 +110,11 @@ function setup() {
     lobbyPanel.hidden = true;
     game.hidden = false;
     document.querySelector("#room-title").textContent = `${detail.room.name} · ${detail.player}`;
-    chat.enter(detail.room, detail.player);
-    stopGame = startLocalGame({
-      arena: { ...resources.arena, ...detail.room.arena },
-      renderEntity: createSpriteRenderer(resources.atlas),
-      onEvent: event => events.dispatchEvent(new CustomEvent(event.type, { detail: event })),
-    });
+    let online;
+    const connection = chat.enter(detail.room, detail.player, packet => online?.receive(packet));
+    online = startOnline(connection, createSpriteRenderer(resources.atlas),
+      name => events.dispatchEvent(new CustomEvent(name)));
+    stopGame = online.stop;
   });
   leave.addEventListener("click", () => {
     chat.leave();
