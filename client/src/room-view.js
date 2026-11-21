@@ -13,13 +13,14 @@ export function connectRoomView(panel) {
     connection = undefined;
   }
 
-  function enter(room, player) {
+  function enter(room, player, onPacket) {
     leave();
     roster.textContent = "—";
     messages.replaceChildren();
     replay.hidden = true;
     replay.removeAttribute("href");
     connection = connectRoom(room.id, player, msg => {
+      onPacket(msg);
       if (msg.type === "status" || msg.type === "notice") state.textContent = msg.text;
       if (msg.type === "joined") {
         state.textContent = "Підключено";
@@ -35,6 +36,7 @@ export function connectRoomView(panel) {
         messages.scrollTop = messages.scrollHeight;
       }
     });
+    return connection;
   }
 
   form.addEventListener("submit", event => {
