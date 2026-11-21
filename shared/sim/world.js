@@ -1,18 +1,20 @@
 import { ARENA, wrap } from "./arena.js";
 import { circlesOverlap, collisionPairs } from "./collision.js";
 import { Asteroid, Explosion, homing, Pickup, Ship } from "./entity.js";
+import { seededRandom } from "../random.js";
 import { Vector2 } from "./vector.js";
 
 const idle = { turn: 0, thrust: false, fire: false };
 
 export class World {
   #entities = new Map();
+  #nextId = 0;
   #respawns = new Map();
   #events = [];
   #invulnerable = new Map();
 
-  constructor(random = Math.random) { this.random = random; }
-  spawn(entity) { this.#entities.set(entity.id, entity); return entity; }
+  constructor(random = seededRandom(1)) { this.random = random; }
+  spawn(entity) { entity.id = ++this.#nextId; this.#entities.set(entity.id, entity); return entity; }
   despawn(id) { const target = this.get(id); if (target) target.alive = false; }
   get(id) { return this.#entities.get(id); }
   [Symbol.iterator]() { return this.#entities.values(); }
@@ -29,6 +31,11 @@ export class World {
     this.#respawns.delete(owner);
     this.#invulnerable.delete(owner);
     for (const entity of this) if (entity.owner === owner) this.#entities.delete(entity.id);
+  }
+
+  scoreOf(owner) {
+    for (const ship of this.ofKind("ship")) if (ship.owner === owner) return ship.score;
+    return this.#respawns.get(owner)?.score ?? 0;
   }
 
   safeSpot() {
@@ -73,6 +80,7 @@ export class World {
       if (entity.kind === "ship" && input.fire) {
         const bullet = entity.fire();
         if (bullet) {
+          bullet.shotSeq = input.seq ?? 0;
           if (input.homing) bullet.behavior = homing("ship", 720);
           this.spawn(bullet);
           this.#events.push({ type: "fired", owner: entity.owner, id: bullet.id });
