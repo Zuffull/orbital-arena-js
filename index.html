@@ -8,13 +8,37 @@
   </head>
   <body>
     <main>
-      <header><h1>Orbital Arena</h1><button id="reset" type="button">Скинути позицію</button></header>
+      <h1>Orbital Arena</h1>
+      <section id="loading" class="panel">
+        <h2>Завантаження ресурсів</h2>
+        <canvas id="loading-bar" width="640" height="24" role="progressbar"
+          aria-label="Завантаження ресурсів" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></canvas>
+        <p role="status">Після натискання завантажаться спрайти, звуки й арена.</p>
+        <button id="load-start" type="button">Почати завантаження</button>
+        <button id="load-cancel" type="button" hidden>Скасувати</button>
+      </section>
+      <section id="lobby" class="panel" hidden>
+        <h2>Лобі</h2>
+        <form>
+          <label>Позивний <input name="player" maxlength="24" required /></label>
+          <label>Кімната <select name="room" required></select></label>
+          <button disabled>Увійти</button>
+        </form>
+        <p role="status"></p>
+      </section>
+      <section id="game" hidden>
+      <header>
+        <h2 id="room-title">Ігрова арена</h2>
+        <button id="reset" type="button">Скинути позицію</button>
+        <button id="leave" type="button">Вийти в лобі</button>
+      </header>
       <section class="arena" aria-label="Космічна арена">
         <canvas id="arena" aria-label="Політ космічного корабля"></canvas>
         <div id="hud"></div>
         <div id="status"></div>
       </section>
       <footer><span><kbd>W</kbd> / <kbd>↑</kbd> тяга</span><span><kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd> поворот</span><span><kbd>R</kbd> скидання</span><span><kbd>Space</kbd> постріл</span><span><kbd>H</kbd> самонаведення</span></footer>
+      </section>
     </main>
     <script type="module" src="./src/entry.js"></script>
   </body>
