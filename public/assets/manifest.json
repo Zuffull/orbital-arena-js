@@ -1,0 +1,7 @@
+[
+  { "id": "atlas", "type": "image", "url": "/assets/atlas.txt" },
+  { "id": "fired", "type": "audio", "url": "/assets/fired.txt" },
+  { "id": "hit", "type": "audio", "url": "/assets/hit.txt" },
+  { "id": "exploded", "type": "audio", "url": "/assets/exploded.txt" },
+  { "id": "arena", "type": "json", "url": "/assets/arena.json" }
+]
