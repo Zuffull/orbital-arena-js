@@ -1,4 +1,4 @@
-import { ARENA } from "../sim/arena.js";
+import { ARENA } from "../../../shared/sim/arena.js";
 
 export function createCanvas(canvas) {
   const ctx = canvas.getContext("2d");
