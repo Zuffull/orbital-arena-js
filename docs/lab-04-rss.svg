@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 280" role="img" aria-labelledby="title">
+<title id="title">RSS Node.js під час повільної передачі журналу 200,6 МіБ</title>
+<rect width="640" height="280" fill="#fff"/>
+<g stroke="#d6dce5" fill="none"><path d="M60 220H615"/><path d="M60 172H615"/><path d="M60 124H615"/><path d="M60 76H615"/><path d="M60 28H615"/><path d="M60 28V220"/></g>
+<g fill="#22304b" font-family="system-ui, sans-serif" font-size="13">
+<text x="48" y="224" text-anchor="end">0</text><text x="48" y="176" text-anchor="end">20</text><text x="48" y="128" text-anchor="end">40</text><text x="48" y="80" text-anchor="end">60</text><text x="48" y="32" text-anchor="end">80</text><text x="60" y="241" text-anchor="middle">0</text><text x="150" y="241" text-anchor="middle">6</text><text x="240" y="241" text-anchor="middle">12</text><text x="330" y="241" text-anchor="middle">18</text><text x="420" y="241" text-anchor="middle">24</text><text x="510" y="241" text-anchor="middle">30</text><text x="600" y="241" text-anchor="middle">36</text>
+<text x="60" y="20">RSS, МіБ</text><text x="335" y="263" text-anchor="middle">Час від початку передачі, с</text>
+</g>
+<polyline points="60.0,81.9 90.2,71.3 120.3,61.7 150.4,71.3 180.4,68.0 210.6,68.3 240.6,76.3 270.9,68.3 300.9,81.6 331.1,72.0 361.1,80.0 391.2,73.6 421.2,68.1 451.4,79.6 481.4,71.9 511.4,78.3 541.4,78.3 571.5,73.9 601.8,69.5 602.0,69.5" fill="none" stroke="#235ad5" stroke-width="2.6" stroke-linejoin="round" />
+</svg>
