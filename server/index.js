@@ -4,6 +4,7 @@ import { mkdir, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
+import { matches } from "./match.js";
 import { readConfig } from "./config.js";
 import { boundedText } from "./protocol.js";
 import { streamReplay } from "./replay.js";
@@ -68,6 +69,7 @@ async function route(req, res) {
   }
   const method = req.method;
   if (path === "/health" && method === "GET") return json(res, 200, { ok: true });
+  if (path === "/api/stats" && method === "GET") return json(res, 200, [...matches.values()].map(match => match.stats()));
   if (path === "/api/rooms" && method === "GET") return json(res, 200, manager.list());
   if (path === "/api/rooms" && method === "POST") return createRoom(req, res, manager);
   if (config.demoSlow && path === "/api/slow" && method === "GET") {
