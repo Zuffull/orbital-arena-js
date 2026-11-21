@@ -18,6 +18,9 @@ button:hover { background: #213b5d; }
 #game { margin-top: 16px; }
 #loading-bar { width: min(100%, 400px); height: 12px; border-radius: 6px; }
 #status:empty { display: none; }
+#room-panel { margin-bottom: 12px; }
+#room-panel a { color: #78dfff; }
+#chat-messages { max-height: 9rem; overflow: auto; overflow-wrap: anywhere; }
 form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
 label { display: grid; gap: 4px; }
 input, select { padding: 6px 8px; min-height: 32px; border: 1px solid #435978; border-radius: 6px; background: #15253c; color: inherit; }
