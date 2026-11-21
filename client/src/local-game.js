@@ -2,9 +2,9 @@ import { createInput } from "./input.js";
 import { createLoop } from "./loop.js";
 import { createCanvas } from "./render/canvas.js";
 import { drawArena, drawHud, drawShip } from "./render/draw.js";
-import { interpolateShip } from "./sim/arena.js";
-import { Vector2 } from "./sim/vector.js";
-import { World } from "./sim/world.js";
+import { interpolateShip } from "../../shared/sim/arena.js";
+import { Vector2 } from "../../shared/sim/vector.js";
+import { World } from "../../shared/sim/world.js";
 
 export function drawEntity(ctx, entity, pose) {
   if (entity.kind === "ship") {
