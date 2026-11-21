@@ -41,8 +41,8 @@ export class World {
     return candidate;
   }
 
-  populate() {
-    for (const [x, y, vx, vy] of [[220,160,44,28], [740,190,-30,40], [650,430,25,-36], [290,450,-40,-25]]) {
+  populate({ asteroids = 4 } = {}) {
+    for (const [x, y, vx, vy] of [[220,160,44,28], [740,190,-30,40], [650,430,25,-36], [290,450,-40,-25]].slice(0, asteroids)) {
       this.spawn(new Asteroid(new Vector2(x, y), new Vector2(vx, vy)));
     }
     const seeker = this.spawn(new Asteroid(new Vector2(500, 80), new Vector2(-20, 32), 19));
