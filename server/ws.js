@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
 import { parseClient, tokenBucket, version } from "./protocol.js";
+import { decodeInput } from "../shared/codec.js";
+import { Match, matches } from "./match.js";
+import { createLink } from "./link.js";
 
 function send(socket, payload, critical = false) {
   if (socket.readyState !== WebSocket.OPEN) return;
@@ -8,7 +11,7 @@ function send(socket, payload, critical = false) {
     if (critical) socket.close(1013, "Slow client");
     return;
   }
-  socket.send(JSON.stringify({ v: version, ...payload }));
+  socket.send(payload instanceof ArrayBuffer ? payload : JSON.stringify({ v: version, ...payload }));
 }
 
 function bindRoom(room) {
@@ -28,8 +31,9 @@ export function attachSockets(server, manager, { pingMs = 15_000, joinMs = 5000 
   const bound = new WeakSet();
   wss.on("error", error => console.error("WebSocket server:", error.message));
 
-  wss.on("connection", socket => {
-    const take = tokenBucket();
+  wss.on("connection", (socket, request) => {
+    const take = tokenBucket(32, 44);
+    const link = createLink(request.url);
     const deadline = setTimeout(() => socket.close(1008, "Join timeout"), joinMs);
     let room, player;
     socket.missedPongs = 0;
@@ -37,26 +41,33 @@ export function attachSockets(server, manager, { pingMs = 15_000, joinMs = 5000 
     socket.on("error", error => console.warn("WebSocket:", error.message));
     socket.on("close", () => {
       clearTimeout(deadline);
+      link.close();
       room?.leave(player.id);
     });
     socket.on("message", (bytes, binary) => {
       if (socket.readyState !== WebSocket.OPEN) return;
       if (!take()) return socket.close(1008, "Rate limit");
-      const message = binary ? null : parseClient(bytes);
+      let message;
+      try { message = binary ? decodeInput(bytes) : parseClient(bytes); } catch { message = null; }
       if (!message) return socket.close(1003, "Invalid message");
       if (!room && message.type === "join") {
         const target = manager.get(message.room);
         if (!target) return socket.close(1008, "Room unavailable");
         if (!bound.has(target)) {
           bindRoom(target);
+          new Match(target, send);
           bound.add(target);
         }
-        const candidate = { id: randomUUID(), name: message.name, socket };
+        const candidate = { id: randomUUID(), name: message.name, socket, link, binary: message.binary, ack: 0, inputs: new Map() };
         if (!target.join(candidate)) return socket.close(1008, "Room full or busy");
         room = target;
         player = candidate;
         clearTimeout(deadline);
-        send(socket, { type: "joined", id: player.id, replayId: room.replayId }, true);
+        send(socket, { type: "joined", id: player.id, replayId: room.replayId, seed: matches.get(room.id).seed }, true);
+      } else if (room && message.type === "input" && binary === player.binary) {
+        link.schedule(() => matches.get(room.id)?.input(player, message));
+      } else if (room && message.type === "probe") {
+        link.schedule(() => link.schedule(() => send(socket, message), false), false);
       } else if (room && message.type === "chat") {
         if (!room.chat(player, message.text)) send(socket, { type: "notice", text: "Журнал зайнятий. Повтори пізніше." });
       } else socket.close(1008, "Unexpected message");
