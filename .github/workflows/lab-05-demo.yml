@@ -1,11 +1,5 @@
 name: Validate and stage Lab 08
-on:
-  workflow_dispatch:
-    inputs:
-      public_url:
-        description: Leave empty for the staging build. For final tags, provide the verified public HTTPS URL.
-        required: false
-        type: string
+on: workflow_dispatch
 permissions:
   contents: write
   packages: write
@@ -27,7 +21,6 @@ jobs:
         with:
           node-version-file: target/.nvmrc
       - name: Validate candidate, Docker and browser recovery
-        if: inputs.public_url == ''
         working-directory: target
         run: |
           test -f .github/workflows/release.yml
@@ -42,7 +35,6 @@ jobs:
           npx playwright install chromium
           npm run test:e2e
       - name: Record demonstration and push candidate
-        if: inputs.public_url == ''
         working-directory: target
         env:
           TOKEN: ${{ github.token }}
@@ -66,30 +58,3 @@ jobs:
           docker build --build-arg BUILD_SHA="$candidate_sha" -t "$image:preview" .
           docker push "$image:preview"
           git push origin HEAD:refs/heads/main
-      - name: Add verified address and tag release
-        if: inputs.public_url != ''
-        working-directory: target
-        env:
-          PUBLIC_URL: ${{ inputs.public_url }}
-        run: |
-          [[ "$PUBLIC_URL" =~ ^https://[a-z0-9-]+\.onrender\.com$ ]]
-          curl -fsS --retry 4 --max-time 45 "$PUBLIC_URL/health" | jq -e --arg sha "$(git rev-parse HEAD)" '.sha == $sha'
-          curl -fsS "$PUBLIC_URL/ready"
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          file = Path('README.md')
-          text = file.read_text()
-          url = os.environ['PUBLIC_URL']
-          marker = '## Лабораторна 08. Публічна мережева гра\n'
-          link = f'\n**[Відкрити Orbital Arena]({url})** · [Стан сервера]({url}/health)\n'
-          assert marker in text
-          file.write_text(text.replace(marker, marker + link, 1))
-          PY
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add README.md
-          git commit -m 'Lab 08: Add verified HTTPS game address'
-          git tag -a lab-08 -m 'Lab 08'
-          git tag -a v1.0.0 -m 'Orbital Arena v1.0.0'
-          git push --atomic origin HEAD:refs/heads/main refs/tags/lab-08 refs/tags/v1.0.0
