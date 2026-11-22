@@ -25,6 +25,15 @@ jobs:
         run: |
           test -f .github/workflows/release.yml
           git apply --index --whitespace=fix ../upload/lab08-migration.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('server/rooms.ts')
+          s = p.read_text()
+          s = s.replace('constructor(name: string, logDir: string, private readonly maximum = 8) {\n    super();', 'private readonly maximum: number;\n\n  constructor(name: string, logDir: string, maximum = 8) {\n    super();\n    this.maximum = maximum;')
+          s = s.replace('constructor(logDir: string, private readonly limit = 16, private readonly players = 8) { this.logDir = logDir; }', 'private readonly limit: number;\n  private readonly players: number;\n\n  constructor(logDir: string, limit = 16, players = 8) {\n    this.logDir = logDir;\n    this.limit = limit;\n    this.players = players;\n  }')
+          p.write_text(s)
+          PY
+          git add server/rooms.ts
           npm install --no-audit --no-fund
           npm run typecheck
           npm run lint
