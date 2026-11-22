@@ -1,0 +1,63 @@
+name: Docker release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci --no-audit --no-fund
+      - name: Build and test the image
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker build --build-arg "BUILD_SHA=$GITHUB_SHA" -t "$image:$TAG" .
+          bash scripts/check-container.sh "$image:$TAG" "$GITHUB_SHA"
+      - name: Push to GHCR
+        env:
+          TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag "$image:$TAG" "$image:latest"
+          docker push "$image:$TAG"
+          docker push "$image:latest"
+
+  deploy:
+    needs: release
+    if: vars.RENDER_PUBLIC_URL != ''
+    runs-on: ubuntu-24.04
+    environment:
+      name: production
+      url: ${{ vars.RENDER_PUBLIC_URL }}
+    steps:
+      - name: Deploy exact container and verify SHA
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+          PUBLIC_URL: ${{ vars.RENDER_PUBLIC_URL }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          [[ -n "$HOOK" && "$PUBLIC_URL" == https://* ]]
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:$TAG"
+          curl --silent --fail --output /dev/null --get --data-urlencode "imgURL=$image" "$HOOK"
+          for attempt in {1..45}; do
+            if curl --silent --fail --max-time 8 "$PUBLIC_URL/health" | jq -e --arg sha "$GITHUB_SHA" '.sha == $sha'; then
+              curl --silent --fail "$PUBLIC_URL/ready"
+              exit 0
+            fi
+            sleep 8
+          done
+          exit 1
