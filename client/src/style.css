@@ -26,3 +26,9 @@ button:hover { background: #213b5d; }
 form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
 label { display: grid; gap: 4px; }
 input, select { padding: 6px 8px; min-height: 32px; border: 1px solid #435978; border-radius: 6px; background: #15253c; color: inherit; }
+
+#lobby-notice:empty, #touch-controls { display: none; }
+@media (pointer: coarse) {
+  #touch-controls { display: flex; flex-wrap: wrap; gap: .4rem; margin: .5rem 0; }
+  #touch-controls button { min-height: 44px; touch-action: none; user-select: none; }
+}

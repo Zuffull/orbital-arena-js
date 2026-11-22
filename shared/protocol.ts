@@ -80,6 +80,7 @@ export const serverMessage = z.discriminatedUnion("type", [
   z.object({ v, type: z.literal("roster"), players: z.array(player) }),
   player.extend({ v, type: z.literal("chat"), text: boundedString(240) }),
   z.object({ v, type: z.literal("notice"), text: z.string() }),
+  z.object({ v, type: z.literal("shutdown"), text: z.string() }),
   z.object({ v, type: z.literal("probe"), nonce: uint32 }),
 ]);
 export type ServerMessage = z.infer<typeof serverMessage>;

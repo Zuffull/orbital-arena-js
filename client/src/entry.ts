@@ -8,6 +8,10 @@ import { createSpriteRenderer } from "./sprites.ts";
 
 import { context2d, requireElement } from "./dom.ts";
 
+if (import.meta.env.PROD && window.isSecureContext && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => { void navigator.serviceWorker.register("/sw.js").catch(console.warn); }, { once: true });
+}
+
 const params = new URLSearchParams(location.search);
 const game = requireElement("#game", HTMLElement);
 
@@ -116,18 +120,26 @@ function setup() {
     game.hidden = false;
     requireElement("#room-title", HTMLElement).textContent = `${detail.room.name} · ${detail.player}`;
     let online: ReturnType<typeof startOnline> | undefined;
-    const connection = chat.enter(detail.room, detail.player, packet => online?.receive(packet));
+    const connection = chat.enter(detail.room, detail.player, packet => {
+      if (packet.type === "shutdown" || packet.type === "lost") {
+        returnToLobby(packet.text);
+        return;
+      }
+      online?.receive(packet);
+    });
     online = startOnline(connection, createSpriteRenderer(atlas),
       name => events.dispatchEvent(new CustomEvent(name)));
     stopGame = online.stop;
   });
-  leave.addEventListener("click", () => {
+  function returnToLobby(reason = "") {
     chat.leave();
     stopGame?.();
     stopGame = undefined;
     game.hidden = true;
     lobbyPanel.hidden = false;
+    requireElement("#lobby-notice", HTMLElement).textContent = reason;
     lobby.start();
-  });
+  }
+  leave.addEventListener("click", () => returnToLobby());
   progress(0, 0);
 }

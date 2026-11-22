@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101e34" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/assets/icon-192.png" />
     <title>Orbital Arena</title>
     <link rel="stylesheet" href="./src/style.css" />
   </head>
@@ -18,6 +21,7 @@
         <button id="load-cancel" type="button" hidden>Скасувати</button>
       </section>
       <section id="lobby" class="panel" hidden>
+        <p id="lobby-notice" aria-live="polite"></p>
         <h2>Лобі</h2>
         <form>
           <label>Позивний <input name="player" maxlength="24" required /></label>
@@ -37,6 +41,13 @@
         <div id="hud"></div>
         <div id="status"></div>
       </section>
+      <div id="touch-controls" aria-label="Керування польотом">
+        <button type="button" data-control="KeyA" aria-label="Ліворуч">←</button>
+        <button type="button" data-control="KeyW" aria-label="Тяга">↑</button>
+        <button type="button" data-control="KeyD" aria-label="Праворуч">→</button>
+        <button type="button" data-control="Space">Вогонь</button>
+        <button type="button" data-control="KeyH">Самонаведення</button>
+      </div>
       <section id="network-panel" class="panel">
         <output id="netgraph" aria-label="Мережеві показники"></output>
         <label>Інтерполяція <input id="interpolation" type="range" min="35" max="250" value="100" /></label>

@@ -3,7 +3,7 @@ import { fetchJson, withRetry } from "./assets.ts";
 import { z } from "zod";
 
 const roomsSchema = z.array(z.object({
-  id: z.string(), name: z.string(), players: z.number().optional(),
+  id: z.string(), name: z.string(), players: z.number().optional(), capacity: z.number().optional(),
 }));
 export type RoomSummary = z.infer<typeof roomsSchema>[number];
 type LobbyEvents = {

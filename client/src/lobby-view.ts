@@ -10,7 +10,7 @@ export function connectLobby(lobby: Lobby, panel: HTMLElement) {
 
   lobby.on("rooms", (detail) => {
     const selected = room.value;
-    room.replaceChildren(...detail.map(item => new Option(item.players === undefined ? item.name : item.name + " · " + item.players + "/8", item.id)));
+    room.replaceChildren(...detail.map(item => new Option(item.players === undefined ? item.name : item.name + " · " + item.players + "/" + (item.capacity ?? 8), item.id)));
     if (detail.some(item => item.id === selected)) room.value = selected;
     join.disabled = !detail.length;
     status.textContent = detail.length ? "" : "Кімнат поки немає.";

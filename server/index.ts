@@ -10,13 +10,16 @@ import { z } from "zod";
 import { boundedString } from "../shared/protocol.ts";
 import { streamReplay } from "./replay.ts";
 import { RoomManager } from "./rooms.ts";
-import { attachSockets } from "./ws.ts";
+import { log } from "./log.ts";
+import { metrics, startMetrics } from "./metrics.ts";
+import { attachSockets, send } from "./ws.ts";
 
 const roomBody = z.object({ name: boundedString(32) });
 
 const mime: Record<string, string> = {
   ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
   ".json": "application/json", ".txt": "text/plain", ".svg": "image/svg+xml",
+  ".webmanifest": "application/manifest+json",
   ".png": "image/png", ".wav": "audio/wav",
 };
 
@@ -56,14 +59,20 @@ async function serveStatic(root: string, path: string, req: IncomingMessage, res
   if (!info.isFile()) return json(res, 404, { error: "Not found" });
   const contentType = mime[extname(canonical)] || "application/octet-stream";
   const type = /^(text\/|application\/json)/.test(contentType) ? contentType + "; charset=utf-8" : contentType;
-  res.writeHead(200, { "Content-Type": type, "Content-Length": info.size });
+  res.writeHead(200, { "Content-Type": type, "Content-Length": info.size,
+    "Cache-Control": path === "/sw.js" || path === "/" ? "no-cache" : "public, max-age=300",
+    "X-Content-Type-Options": "nosniff",
+  });
   if (req.method === "HEAD") res.end();
   else await pipeline(createReadStream(canonical), res);
 }
 
 const config = readConfig();
 await mkdir(config.logDir, { recursive: true });
-const manager = new RoomManager(config.logDir);
+const manager = new RoomManager(config.logDir, config.maxRooms, config.maxPlayers);
+let ready = false;
+let stopping = false;
+const monitor = startMetrics();
 
 async function route(req: IncomingMessage, res: ServerResponse) {
   let path;
@@ -73,7 +82,13 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     return json(res, 403, { error: "Forbidden path" });
   }
   const method = req.method;
-  if (path === "/health" && method === "GET") return json(res, 200, { ok: true });
+  if (path === "/health" && method === "GET") return json(res, 200, { ok: true, sha: config.buildSha });
+  if (path === "/ready" && method === "GET") return json(res, ready ? 200 : 503, { ready });
+  if (path === "/metrics" && method === "GET") {
+    res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8" }).end(metrics(manager));
+    return;
+  }
+  if (!ready) return json(res, 503, { error: "Server not ready" });
   if (path === "/api/stats" && method === "GET") return json(res, 200, [...matches.values()].map(match => match.stats()));
   if (path === "/api/rooms" && method === "GET") return json(res, 200, manager.list());
   if (path === "/api/rooms" && method === "POST") return createRoom(req, res, manager);
@@ -94,35 +109,48 @@ const server = createServer((req, res) => {
   void route(req, res).catch((error: unknown) => {
     const code = error instanceof Error && "code" in error ? error.code : undefined;
     if (res.destroyed || code === "ERR_STREAM_PREMATURE_CLOSE" || code === "ECONNRESET") return;
-    console.error(error);
+    log.error({ err: error }, "HTTP request failed");
     if (res.headersSent) res.destroy();
     else json(res, 500, { error: "Internal error" });
   });
 });
-const sockets = attachSockets(server, manager);
+const sockets = attachSockets(server, manager, config, () => ready);
 server.on("error", error => {
-  console.error("HTTP server:", error.message);
-  process.exitCode = 1;
-  sockets.close();
-  void manager.close();
+  log.fatal({ err: error }, "HTTP server failed");
+  process.exit(1);
 });
-server.listen(config.port, config.host, () => console.log(`READY ${config.host}:${config.port}`));
-
-let stopping = false;
+server.listen(config.port, config.host, () => {
+  ready = true;
+  log.info({ host: config.host, port: config.port, sha: config.buildSha }, "READY");
+});
 async function shutdown() {
   if (stopping) return;
   stopping = true;
-  const httpClosed = new Promise<void>(resolve => server.close(() => resolve()));
-  const wsClosed = new Promise<void>(resolve => sockets.close(() => resolve()));
-  for (const socket of sockets.clients) socket.close(1001, "Server stopping");
+  ready = false;
+  clearInterval(monitor);
+  log.info("Draining connections");
+  for (const socket of sockets.clients) {
+    send(socket, { type: "shutdown", text: "Сервер завершує роботу. Повернення в лобі." });
+    socket.close(1001, "Server stopping");
+  }
+  const hard = setTimeout(() => {
+    log.fatal("Shutdown deadline exceeded");
+    process.exit(1);
+  }, 8500).unref();
   const force = setTimeout(() => {
     for (const socket of sockets.clients) socket.terminate();
     server.closeAllConnections();
-  }, 1500);
+  }, 1500).unref();
+  const wsClosed = new Promise<void>(resolve => sockets.close(() => resolve()));
+  // Keep health available briefly while readiness and new upgrades are already rejected.
+  const httpClosed = new Promise<void>(resolve => {
+    setTimeout(() => server.close(() => resolve()), 500);
+  });
   await Promise.all([httpClosed, wsClosed]);
-  clearTimeout(force);
   await manager.close();
-  console.log("STOPPED");
+  clearTimeout(force);
+  clearTimeout(hard);
+  log.info("STOPPED");
 }
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());

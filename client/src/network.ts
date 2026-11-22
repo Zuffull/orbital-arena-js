@@ -1,7 +1,7 @@
 import { decodeSnapshot, encodeInput } from "../../shared/codec.ts";
 import { VERSION as v, serverMessage, type Input, type ServerMessage } from "../../shared/protocol.ts";
 
-export type RoomPacket = ServerMessage | { type: "status"; text: string };
+export type RoomPacket = ServerMessage | { type: "status" | "lost"; text: string };
 export type Connection = ReturnType<typeof connectRoom>;
 
 const permanent = new Set([1003, 1008, 1009]);
@@ -58,7 +58,8 @@ export function connectRoom(room: string, name: string, receive: (packet: RoomPa
   }
 
   function connect() {
-    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+    const scheme = location.protocol === "http:" && loopback ? "ws:" : "wss:";
     const connection = new WebSocket(scheme + "//" + location.host + "/ws?" + settings);
     connection.binaryType = "arraybuffer";
     socket = connection;
@@ -101,10 +102,10 @@ export function connectRoom(room: string, name: string, receive: (packet: RoomPa
     connection.addEventListener("close", event => {
       if (stopped || connection !== socket) return;
       disconnect();
-      if (permanent.has(event.code)) {
+      if (permanent.has(event.code) || event.code === 1001 || attempts >= 3) {
         stopped = true;
         queue.length = 0;
-        receive({ type: "status", text: "Р—'С”РґРЅР°РЅРЅСЏ Р·Р°РєСЂРёС‚Рѕ: " + event.reason });
+        receive({ type: "lost", text: "Р—'С”РґРЅР°РЅРЅСЏ Р·Р°РєСЂРёС‚Рѕ: " + event.reason });
         return;
       }
       const delay = Math.min(5000, 250 * 2 ** attempts++);

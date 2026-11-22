@@ -16,8 +16,28 @@ export function createInput(target: Window) {
     held.delete(event.code);
   }
 
+  const touch = new Map<number, string>();
+  const touchControls = target.document.querySelector("#touch-controls");
+  function pointerDown(event: Event) {
+    if (!(event instanceof PointerEvent) || !(event.target instanceof HTMLButtonElement)) return;
+    const code = event.target.dataset.control;
+    if (!code || !controls.has(code)) return;
+    event.preventDefault();
+    event.target.setPointerCapture(event.pointerId);
+    touch.set(event.pointerId, code);
+    pressed.add(code);
+  }
+  function pointerUp(event: Event) {
+    if (event instanceof PointerEvent) touch.delete(event.pointerId);
+  }
+  touchControls?.addEventListener("pointerdown", pointerDown);
+  touchControls?.addEventListener("lostpointercapture", pointerUp);
+  touchControls?.addEventListener("pointerup", pointerUp);
+  touchControls?.addEventListener("pointercancel", pointerUp);
+
   function clear() {
     held.clear();
+    touch.clear();
     pressed.clear();
   }
 
@@ -25,9 +45,13 @@ export function createInput(target: Window) {
   target.addEventListener("keyup", keyup);
   target.addEventListener("blur", clear);
   return {
-    isDown: (code: string) => held.has(code),
+    isDown: (code: string) => held.has(code) || (touch.size > 0 && [...touch.values()].includes(code)),
     justPressed: (code: string) => pressed.delete(code),
     destroy() {
+      touchControls?.removeEventListener("pointerdown", pointerDown);
+      touchControls?.removeEventListener("lostpointercapture", pointerUp);
+      touchControls?.removeEventListener("pointerup", pointerUp);
+      touchControls?.removeEventListener("pointercancel", pointerUp);
       target.removeEventListener("keydown", keydown);
       target.removeEventListener("keyup", keyup);
       target.removeEventListener("blur", clear);

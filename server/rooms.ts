@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
+import { log } from "./log.ts";
 import type { WebSocket } from "ws";
 import type { Input, Seq } from "../shared/protocol.ts";
 import type { createLink } from "./link.ts";
@@ -34,8 +35,11 @@ export class Room extends EventEmitter<RoomEvents> {
   logDone: Promise<void>;
   #log;
 
-  constructor(name: string, logDir: string) {
+  private readonly maximum: number;
+
+  constructor(name: string, logDir: string, maximum = 8) {
     super();
+    this.maximum = maximum;
     this.name = name;
     this.replayId = this.id + "-" + Date.now();
     this.#log = new Transform({
@@ -44,7 +48,7 @@ export class Room extends EventEmitter<RoomEvents> {
         next(null, JSON.stringify(record) + "\n");
       },
     });
-    this.on("error", error => console.error("Room log:", this.id, error.message));
+    this.on("error", error => log.error({ err: error, roomId: this.id }, "Room log failed"));
     this.logDone = pipeline(this.#log, createWriteStream(join(logDir, this.replayId + ".ndjson")))
       .catch((error: unknown) => { this.emit("error", error instanceof Error ? error : new Error(String(error))); });
   }
@@ -52,10 +56,11 @@ export class Room extends EventEmitter<RoomEvents> {
   #record<K extends keyof RecordEvents>(type: K, ...args: RecordEvents[K]) {
     const [data] = args;
     if (!this.#log.destroyed) this.#log.write({ t: Date.now(), type, ...data });
+    log.info({ roomId: this.id, playerId: data.id, event: type }, "Room event");
   }
 
   join(player: Player) {
-    if (this.players.size >= 8 || this.#log.writableLength >= 224) return false;
+    if (this.players.size >= this.maximum || this.#log.writableLength >= 224) return false;
     this.players.set(player.id, player);
     const event = { id: player.id, name: player.name };
     this.#record("join", event);
@@ -80,7 +85,7 @@ export class Room extends EventEmitter<RoomEvents> {
   }
 
   summary() {
-    return { id: this.id, name: this.name, players: this.players.size, replayId: this.replayId, arena: {} };
+    return { id: this.id, name: this.name, players: this.players.size, capacity: this.maximum, replayId: this.replayId, arena: {} };
   }
 
   close() {
@@ -94,11 +99,24 @@ export class RoomManager {
   #closing = new Set<Promise<void>>();
   logDir: string;
 
-  constructor(logDir: string) { this.logDir = logDir; }
+  private readonly limit: number;
+  private readonly players: number;
+
+  constructor(logDir: string, limit = 16, players = 8) {
+    this.logDir = logDir;
+    this.limit = limit;
+    this.players = players;
+  }
+
+  counts() {
+    let players = 0;
+    for (const room of this.#rooms.values()) players += room.players.size;
+    return { rooms: this.#rooms.size, players };
+  }
 
   create(name: string) {
-    if (this.#rooms.size >= 16) return null;
-    const room = new Room(name, this.logDir);
+    if (this.#rooms.size >= this.limit) return null;
+    const room = new Room(name, this.logDir, this.players);
     const expire = setTimeout(() => this.#remove(room), 90_000).unref();
     room.once("join", () => clearTimeout(expire));
     room.once("empty", () => this.#remove(room));
