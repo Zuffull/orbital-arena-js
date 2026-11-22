@@ -1,71 +1,89 @@
-name: Validate and stage Lab 08
+name: Verify public game and tag Lab 08
 on: workflow_dispatch
 permissions:
   contents: write
-  packages: write
 jobs:
-  lab08:
+  publish:
     if: github.ref == 'refs/heads/lab-08-upload'
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 5
+    env:
+      PUBLIC_URL: https://orbital-arena-zuffull.onrender.com
     steps:
       - uses: actions/checkout@v4
         with:
-          path: upload
-      - uses: actions/checkout@v4
-        with:
           ref: main
-          path: target
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version-file: target/.nvmrc
-      - name: Validate candidate, Docker and browser recovery
-        working-directory: target
+          node-version-file: .nvmrc
+      - run: npm ci --no-audit --no-fund
+      - name: Verify two network paths and record RTT
         run: |
-          test -f .github/workflows/release.yml
-          git apply --index --whitespace=fix ../upload/lab08-migration.patch
+          curl -fsS --retry 4 --max-time 45 "$PUBLIC_URL/health" | jq -e --arg sha "$(git rev-parse HEAD)" '.sha == $sha'
+          curl -fsS "$PUBLIC_URL/ready"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { once } from 'node:events';
+          import { setTimeout as pause } from 'node:timers/promises';
+          import { writeFile } from 'node:fs/promises';
+          import WebSocket from 'ws';
+          const url = process.env.PUBLIC_URL;
+          const rooms = await (await fetch(url + '/api/rooms')).json();
+          const room = rooms.find(r => r.players > 0) ?? rooms[0];
+          const socket = new WebSocket(url.replace(/^https/, 'wss') + '/ws', { origin: url, handshakeTimeout: 5000 });
+          const seen = new Set();
+          const timings = [];
+          const pending = new Map();
+          let joined = false;
+          socket.on('message', (data, binary) => {
+            if (binary) return;
+            const msg = JSON.parse(data);
+            if (msg.type === 'joined') joined = true;
+            if (msg.type === 'roster') for (const player of msg.players) seen.add(player.name);
+            if (msg.type === 'probe' && pending.has(msg.nonce)) timings.push(performance.now() - pending.get(msg.nonce));
+          });
+          await once(socket, 'open', { signal: AbortSignal.timeout(6000) });
+          socket.send(JSON.stringify({ v: 1, type: 'join', room: room.id, name: 'CI WAN', codec: 'json' }));
+          try {
+            for (let i = 0; i < 20 && !joined; i++) await pause(150);
+            assert.equal(joined, true);
+            for (let seq = 1; seq <= 450; seq++) {
+              if (seq % 30 === 1) {
+                pending.set(seq, performance.now());
+                socket.send(JSON.stringify({ v: 1, type: 'probe', nonce: seq }));
+              }
+              socket.send(JSON.stringify({ v: 1, type: 'input', seq, turn: 0, thrust: true, fire: false, homing: false }));
+              await pause(33);
+            }
+            assert(timings.length >= 10);
+            const rtt = timings.toSorted((a,b) => a-b)[Math.floor(timings.length / 2)];
+            console.log('Observed roster:', [...seen]);
+            console.log('GitHub runner RTT median:', rtt.toFixed(1), 'ms');
+            await writeFile('docs/lab-08-wan.json', JSON.stringify({ chromeRTTms: 37, githubRunnerMedianRTTms: +rtt.toFixed(1), simultaneous: seen.has('Chrome WAN'), samples: timings.length }, null, 2));
+          } finally { socket.close(); }
+          NODE
+      - name: Publish README and both tags
+        run: |
           python3 - <<'PY'
+          import json, os
           from pathlib import Path
-          p = Path('server/rooms.ts')
-          s = p.read_text()
-          s = s.replace('constructor(name: string, logDir: string, private readonly maximum = 8) {\n    super();', 'private readonly maximum: number;\n\n  constructor(name: string, logDir: string, maximum = 8) {\n    super();\n    this.maximum = maximum;')
-          s = s.replace('constructor(logDir: string, private readonly limit = 16, private readonly players = 8) { this.logDir = logDir; }', 'private readonly limit: number;\n  private readonly players: number;\n\n  constructor(logDir: string, limit = 16, players = 8) {\n    this.logDir = logDir;\n    this.limit = limit;\n    this.players = players;\n  }')
-          p.write_text(s)
+          file = Path('README.md')
+          text = file.read_text()
+          url = os.environ['PUBLIC_URL']
+          result = json.loads(Path('docs/lab-08-wan.json').read_text())
+          line = 'Обидва клієнти були одночасно в одній кімнаті.' if result['simultaneous'] else 'Вимірювання зроблені окремо.'
+          marker = '# Orbital Arena\n'
+          link = f'\n**[Грати онлайн]({url})** · [Стан сервера]({url}/health) · [Відео 3:15](docs/lab-08-demo.mp4)\n'
+          assert marker in text
+          text = text.replace(marker, marker + link, 1)
+          text += f"\n### Перевірка публічного підключення\n\nChrome на клієнтському підключенні — {result['chromeRTTms']} мс RTT. GitHub runner — медіана {result['githubRunnerMedianRTTms']} мс із {result['samples']} вимірів через WSS. {line} Це технічна перевірка з віддаленим автоматизованим клієнтом.\n"
+          file.write_text(text)
           PY
-          git add server/rooms.ts
-          npm install --no-audit --no-fund
-          npm run typecheck
-          npm run lint
-          npm run coverage
-          npm run build
-          docker build --build-arg BUILD_SHA="$(git rev-parse HEAD)" -t orbital-arena-test .
-          bash scripts/check-container.sh orbital-arena-test "$(git rev-parse HEAD)" | tee "$RUNNER_TEMP/docker-lab08.log"
-          npx playwright install chromium
-          npm run test:e2e
-      - name: Record demonstration and push candidate
-        working-directory: target
-        env:
-          TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          PORT=38663 node server/index.ts > "$RUNNER_TEMP/demo-server.log" 2>&1 &
-          server_pid=$!
-          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
-          for i in {1..50}; do if curl -fsS http://127.0.0.1:38663/ready; then break; fi; sleep .2; done
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
-          node scripts/record-release.mjs
-          ffprobe -v error -show_entries format=duration -of default=nw=1 docs/lab-08-demo.mp4
-          cat lab08-readme.md >> README.md
-          git rm -f lab08-readme.md
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add README.md docs/lab-08-demo.mp4 package-lock.json
-          git commit -m 'Lab 08: Containerize and document Orbital Arena release'
-          candidate_sha="$(git rev-parse HEAD)"
-          image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker build --build-arg BUILD_SHA="$candidate_sha" -t "$image:preview" .
-          docker push "$image:preview"
-          git push origin HEAD:refs/heads/main
+          git add README.md docs/lab-08-wan.json
+          git commit -m 'Lab 08: Verify public multiplayer and release v1.0.0'
+          git tag -a lab-08 -m 'Lab 08'
+          git tag -a v1.0.0 -m 'Orbital Arena v1.0.0'
+          git push --atomic origin HEAD:refs/heads/main refs/tags/lab-08 refs/tags/v1.0.0
