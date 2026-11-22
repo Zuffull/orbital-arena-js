@@ -1,0 +1,1307 @@
+diff --git a/.gitignore b/.gitignore
+index f1905a9..c591142 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -4,3 +4,5 @@ coverage/
+ .env
+ .env.local
+ logs/
++test-results/
++playwright-report/
+diff --git a/README.md b/README.md
+index 550ec2f..c248c32 100644
+--- a/README.md
++++ b/README.md
+@@ -312,3 +312,17 @@ Canvas, HUD і лобі лишилися на звичайному DOM. Лобі
+ - **Навіщо Zod, коли є TypeScript?** Типи стираються під час збірки. Zod перевіряє реальні значення, які надійшли через HTTP або WebSocket.
+ - **Чим `Seq` відрізняється від `Tick`?** `Seq` рахує команди гравця, а `Tick` рахує кроки світу на сервері. Бренди забороняють випадково змішати їх у коді.
+ - **Як `never` допомагає додавати повідомлення?** Якщо додати новий варіант і пропустити гілку, у `default` залишиться реальний тип. `tsc` повідомить про відсутній обробник.
++
++## Лабораторна 07. V8, пам’ять і тести
++
++[![CI](https://github.com/Zuffull/orbital-arena-js/actions/workflows/typecheck.yml/badge.svg)](https://github.com/Zuffull/orbital-arena-js/actions/workflows/typecheck.yml)
++
++`npm run coverage` запускає модульні тести Vitest у shared, client і server, включно з шістьма властивостями fast-check. Для браузерного сценарію виконайте `npm run build`, `npx playwright install chromium` і `npm run test:e2e`.
++
++Для демо запустіть `npm start`, відкрийте гру, а в іншому терміналі виконайте `npm run bots`. Введіть ім’я та зайдіть у «Lab 07 bots». Сім ботів лишають місце для гравця. Команда `npm run profile` відкриває окрему кімнату, записує 30 с з вісьмома автоматизованими гравцями та зберігає профіль. `npm run load` вимірює сервер із 8, 32, 64 і 128 локальними WebSocket-клієнтами, тому для цього запуску потрібен окремий сервер без інших матчів.
++
++### Reflection
++
++- **Що таке прихований клас?** V8 використовує спільний опис форми об’єктів з однаковим набором і порядком полів. Повторне використання кулі зі стабільною формою допомагає inline cache знову знайти ті самі поля.
++- **Що відбувається при деоптимізації?** Якщо припущення JIT про тип або форму значення порушується, V8 повертається до загальнішого виконання. Наприклад, один і той самий вираз отримує і число, і рядок.
++- **Чому важливо скинути стан об’єкта з пулу?** Стара куля могла мати іншого власника чи режим самонаведення. Reset відновлює всі поля, а світ присвоює свіжий ID.
+diff --git a/biome.json b/biome.json
+index 4d9a4fa..c3a8185 100644
+--- a/biome.json
++++ b/biome.json
+@@ -8,6 +8,28 @@
+     }
+   },
+   "linter": {
+-    "enabled": true
++    "enabled": true,
++    "rules": {
++      "recommended": false,
++      "correctness": {
++        "noUnusedImports": "error"
++      },
++      "suspicious": {
++        "noExplicitAny": "error",
++        "noDebugger": "error",
++        "noDuplicateObjectKeys": "error"
++      }
++    }
++  },
++  "files": {
++    "includes": [
++      "**",
++      "!!**/node_modules",
++      "!!**/dist",
++      "!!**/coverage",
++      "!!**/test-results",
++      "!!**/playwright-report",
++      "!!**/logs"
++    ]
+   }
+ }
+diff --git a/client/src/game.test.mjs b/client/src/game.test.mjs
+new file mode 100644
+index 0000000..4e0367c
+--- /dev/null
++++ b/client/src/game.test.mjs
+@@ -0,0 +1,75 @@
++import { afterEach, expect, test, vi } from "vitest";
++import { createLoop } from "./loop.ts";
++import { advance, delta, snapshots } from "./prediction.ts";
++import { World } from "../../shared/sim/world.ts";
++import { Vector2 } from "../../shared/sim/vector.ts";
++import { entityState } from "../../shared/state.ts";
++import { DT } from "../../shared/protocol.ts";
++
++afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
++function clock() {
++  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance"] });
++  vi.stubGlobal("window", globalThis);
++  vi.stubGlobal("requestAnimationFrame", cb => setTimeout(() => cb(performance.now()), 17));
++  vi.stubGlobal("cancelAnimationFrame", id => clearTimeout(id));
++}
++
++test("fixed loop performs 60 steps per simulated second, independently of frames", () => {
++  clock();
++  const simulate = vi.fn(), render = vi.fn();
++  const loop = createLoop({ simulate, render });
++  loop.start();
++  vi.advanceTimersByTime(1020);
++  expect(simulate.mock.calls.length).toBeGreaterThanOrEqual(59);
++  expect(simulate.mock.calls.length).toBeLessThanOrEqual(61);
++  expect(render.mock.calls.length).toBe(60);
++  expect(simulate).toHaveBeenCalledWith(1 / 60);
++  loop.stop();
++});
++test("stop cancels queued frames and start is idempotent", () => {
++  clock();
++  const render = vi.fn();
++  const loop = createLoop({ simulate: vi.fn(), render });
++  loop.start(); loop.start();
++  vi.advanceTimersByTime(34);
++  expect(render).toHaveBeenCalledTimes(2);
++  loop.stop();
++  vi.advanceTimersByTime(100);
++  expect(render).toHaveBeenCalledTimes(2);
++});
++test.each(["variable", "interval"])("experiment mode %s produces the expected timing", mode => {
++  clock();
++  const simulate = vi.fn(), onFrame = vi.fn();
++  const loop = createLoop({ mode, simulate, render: vi.fn(), onFrame });
++  loop.start(); vi.advanceTimersByTime(60);
++  expect(simulate).toHaveBeenCalledWith(mode === "interval" ? 1 / 60 : .017);
++  expect(onFrame).toHaveBeenCalledWith(mode === "interval" ? 16 : 17);
++  loop.stop();
++});
++const cmd = seq => ({ type: "input", seq, thrust: true, turn: seq % 3 - 1, fire: false, homing: false });
++test.each([1, 4, 12])("client replay of %i unacknowledged commands matches the authoritative world", count => {
++  const world = new World();
++  const ship = world.addPlayer("player", 0, new Vector2(995, 590));
++  world.step(DT, new Map([["player", cmd(1)]]));
++  let local = entityState(ship, "player");
++  for (let seq = 2; seq <= count + 1; seq++) {
++    world.step(DT, new Map([["player", cmd(seq)]]));
++    local = advance(local, cmd(seq)).ship;
++  }
++  expect(local).toEqual(entityState(ship, "player"));
++});
++test("reconciliation uses the smallest wrapped displacement", () => {
++  expect(delta({ x: 1, y: 599 }, { x: 999, y: 1 })).toEqual({ x: 2, y: -2 });
++});
++test("snapshot buffer discards duplicates and interpolates positions", () => {
++  const frames = snapshots();
++  const world = new World();
++  const ship = world.addPlayer("player", 0, new Vector2(990, 50));
++  const entity = entityState(ship, "player");
++  frames.push({ tick: 2, entities: [entity] }, 10);
++  frames.push({ tick: 2, entities: [] }, 11);
++  frames.push({ tick: 3, entities: [{ ...entity, x: 10 }] }, 45);
++  expect(frames.at(10 + 1000 * DT / 2)[0].x).toBeCloseTo(0);
++  frames.clear();
++  expect(frames.at(50)).toEqual([]);
++});
+diff --git a/client/src/online-game.ts b/client/src/online-game.ts
+index 44f10b6..775863d 100644
+--- a/client/src/online-game.ts
++++ b/client/src/online-game.ts
+@@ -1,5 +1,5 @@
+ import { DT, sequence as inputSequence, tickNumber, ZERO_SEQ, type EntityId, type Input, type Seq, type SnapshotEntity } from "../../shared/protocol.ts";
+-import { wrapShip } from "../../shared/sim/arena.ts";
++import { ARENA, wrap, wrapShip } from "../../shared/sim/arena.ts";
+ import { createInput } from "./input.ts";
+ import { createLoop } from "./loop.ts";
+ import { advance, delta, snapshots } from "./prediction.ts";
+@@ -100,7 +100,10 @@ export function startOnline(connection: Connection, drawEntity: RenderSprite, so
+     for (const [seq, bullet] of bullets) {
+       bullet.life -= dt;
+       if (bullet.life <= 0) bullets.delete(seq);
+-      else bullets.set(seq, wrapShip({ ...bullet, x: bullet.x + bullet.vx * dt, y: bullet.y + bullet.vy * dt }));
++      else {
++        bullet.x = wrap(bullet.x + bullet.vx * dt, ARENA.width);
++        bullet.y = wrap(bullet.y + bullet.vy * dt, ARENA.height);
++      }
+     }
+     if (!ship || !predict) return;
+     const next = advance(ship, input);
+@@ -129,9 +132,11 @@ export function startOnline(connection: Connection, drawEntity: RenderSprite, so
+     drawArena(ctx);
+     const now = performance.now();
+     const delay = Number(slider.value);
+-    for (const entity of history.at(now - delay)) {
+-      if (!entity.self) paint(ctx, entity);
+-    }
++    const remote = history.at(now - delay);
++    const opponent = remote.find(entity => entity.kind === "ship" && !entity.self);
++    graph.dataset.remoteX = opponent?.x.toFixed(3) ?? "";
++    graph.dataset.remoteY = opponent?.y.toFixed(3) ?? "";
++    for (const entity of remote) if (!entity.self) paint(ctx, entity);
+     for (const entity of history.at(now)) {
+       if (entity.self && entity.kind !== "ship") paint(ctx, entity);
+     }
+diff --git a/e2e/multiplayer.spec.mjs b/e2e/multiplayer.spec.mjs
+new file mode 100644
+index 0000000..4b1433d
+--- /dev/null
++++ b/e2e/multiplayer.spec.mjs
+@@ -0,0 +1,34 @@
++import { test, expect } from "@playwright/test";
++
++test("another browser sees movement and receives chat", async ({ browser, playwright, browserName, baseURL }) => {
++  const secondBrowser = await playwright[browserName].launch();
++  try {
++    const first = await browser.newPage();
++    const second = await secondBrowser.newPage();
++    const room = await first.request.post(baseURL + "/api/rooms", { data: { name: "Playwright test" } });
++    expect(room.ok()).toBe(true);
++    const { id } = await room.json();
++    const errors = [];
++    for (const [page, name] of [[first, "Alpha"], [second, "Beta"]]) {
++      page.on("pageerror", error => errors.push(error.message));
++      await page.goto(baseURL);
++      await page.locator("#load-start").click();
++      await page.locator("[name=player]").fill(name);
++      await page.locator("[name=room]").selectOption(id);
++      await page.locator("#lobby button").click();
++    }
++    await expect(second.locator("#roster")).toHaveText("Alpha, Beta");
++    const graph = second.locator("#netgraph");
++    await expect(graph).toHaveAttribute("data-remote-x", /\d/);
++    const initial = await graph.getAttribute("data-remote-x");
++    await first.keyboard.down("w");
++    await expect(graph).not.toHaveAttribute("data-remote-x", initial);
++    await first.keyboard.up("w");
++    await second.locator("[name=message]").fill("Перевірка синхронізації");
++    await second.locator("#chat button").click();
++    await expect(first.locator("#chat-messages li")).toHaveText("Beta: Перевірка синхронізації");
++    expect(errors).toEqual([]);
++  } finally {
++    await secondBrowser.close();
++  }
++});
+diff --git a/package.json b/package.json
+index 27c0641..6c5bd16 100644
+--- a/package.json
++++ b/package.json
+@@ -19,12 +19,22 @@
+     "lint": "biome lint .",
+     "format": "biome format --write .",
+     "typecheck": "tsc --noEmit",
+-    "test": "node --test"
++    "test": "vitest run",
++    "coverage": "vitest run --coverage",
++    "test:e2e": "playwright test",
++    "bots": "node scripts/bots.mjs",
++    "load": "node scripts/load.mjs",
++    "profile": "node scripts/profile.mjs"
+   },
+   "devDependencies": {
++    "ws": "8.18.3",
+     "@biomejs/biome": "2.2.5",
+     "typescript": "5.9.3",
+     "@types/node": "24.10.1",
+-    "@types/ws": "8.18.0"
++    "@types/ws": "8.18.0",
++    "vitest": "3.2.4",
++    "@vitest/coverage-v8": "3.2.4",
++    "@playwright/test": "1.56.1",
++    "fast-check": "4.3.0"
+   }
+ }
+diff --git a/playwright.config.mjs b/playwright.config.mjs
+new file mode 100644
+index 0000000..d39fc36
+--- /dev/null
++++ b/playwright.config.mjs
+@@ -0,0 +1,10 @@
++import { defineConfig } from "@playwright/test";
++export default defineConfig({
++  testDir: "e2e",
++  use: { baseURL: "http://127.0.0.1:38652" },
++  webServer: {
++    command: "node server/index.ts",
++    url: "http://127.0.0.1:38652/health",
++    env: { PORT: "38652" },
++  },
++});
+diff --git a/scripts/bots.mjs b/scripts/bots.mjs
+new file mode 100644
+index 0000000..0beb109
+--- /dev/null
++++ b/scripts/bots.mjs
+@@ -0,0 +1,92 @@
++import { once } from "node:events";
++import { setTimeout as sleep } from "node:timers/promises";
++import { pathToFileURL } from "node:url";
++import WebSocket from "ws";
++import { encodeInput } from "../shared/codec.ts";
++import { DT } from "../shared/protocol.ts";
++
++export function localOrigin(value) {
++  const url = new URL(value);
++  if (url.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
++    throw new Error("Use a local HTTP game server");
++  }
++  return url.origin;
++}
++
++export async function createRoom(origin, name) {
++  const response = await fetch(localOrigin(origin) + "/api/rooms", {
++    method: "POST", body: JSON.stringify({ name }), signal: AbortSignal.timeout(4000),
++  });
++  if (!response.ok) throw new Error(`Room creation failed (${response.status})`);
++  return response.json();
++}
++
++export function botControls(slot, seq) {
++  const phase = (Math.floor(seq / 40) + slot) % 4;
++  return {
++    type: "input", seq,
++    turn: phase === 0 ? -1 : phase === 2 ? 1 : 0,
++    thrust: phase !== 3,
++    fire: true,
++    homing: phase === 2,
++  };
++}
++
++export async function joinBot(origin, room, slot) {
++  const socket = new WebSocket(localOrigin(origin).replace(/^http/, "ws") + "/ws", { handshakeTimeout: 4000 });
++  socket.on("error", () => socket.terminate());
++  let timer;
++  try {
++    await once(socket, "open", { signal: AbortSignal.timeout(5000) });
++    const joined = new Promise((resolve, reject) => {
++      const deadline = setTimeout(() => reject(new Error("Bot join timed out")), 4500);
++      socket.once("close", () => { clearTimeout(deadline); reject(new Error("Bot join rejected")); });
++      socket.on("message", (data, binary) => {
++        if (!binary && JSON.parse(data.toString()).type === "joined") {
++          clearTimeout(deadline);
++          resolve();
++        }
++      });
++    });
++    socket.send(JSON.stringify({ v: 1, type: "join", room, name: "Bot " + slot, codec: "bin" }));
++    await joined;
++    let seq = 0;
++    timer = setInterval(() => {
++      if (socket.readyState === WebSocket.OPEN && socket.bufferedAmount < 16_384) {
++        socket.send(encodeInput(botControls(slot, ++seq)));
++      }
++    }, Math.round(DT * 1000));
++    socket.once("close", () => clearInterval(timer));
++    return async () => {
++      clearInterval(timer);
++      if (socket.readyState === WebSocket.CLOSED) return;
++      const closed = once(socket, "close", { signal: AbortSignal.timeout(3500) });
++      socket.close();
++      await closed.catch(() => socket.terminate());
++    };
++  } catch (error) {
++    clearInterval(timer);
++    socket.terminate();
++    throw error;
++  }
++}
++
++if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
++  const origin = localOrigin(process.env.ORIGIN ?? "http://127.0.0.1:3000");
++  const [count = "7", existingRoom, seconds = "300"] = process.argv.slice(2);
++  const n = Number(count), duration = Number(seconds);
++  if (!Number.isInteger(n) || n < 1 || n > 8 || !Number.isFinite(duration) || duration <= 0 || duration > 3600) {
++    throw new Error("Usage: npm run bots -- [1..8] [room ID] [seconds up to 3600]");
++  }
++  const room = existingRoom ?? (await createRoom(origin, "Lab 07 bots")).id;
++  const stops = [];
++  const signal = new AbortController();
++  process.once("SIGINT", () => signal.abort());
++  try {
++    for (let slot = 1; slot <= n; slot++) stops.push(await joinBot(origin, room, slot));
++    console.log(`${n} bots in room ${room}. Select “Lab 07 bots” in the lobby when a slot is available.`);
++    await sleep(duration * 1000, undefined, { signal: signal.signal }).catch(error => {
++      if (!signal.signal.aborted) throw error;
++    });
++  } finally { await Promise.all(stops.map(stop => stop())); }
++}
+diff --git a/scripts/load.mjs b/scripts/load.mjs
+new file mode 100644
+index 0000000..bb8b231
+--- /dev/null
++++ b/scripts/load.mjs
+@@ -0,0 +1,27 @@
++import { setTimeout as sleep } from "node:timers/promises";
++import { writeFile } from "node:fs/promises";
++import { createRoom, joinBot, localOrigin } from "./bots.mjs";
++
++const origin = localOrigin(process.env.ORIGIN ?? "http://127.0.0.1:3000");
++const rows = [];
++for (const n of [8, 32, 64, 128]) {
++  const stops = [], rooms = [];
++  try {
++    for (let start = 0; start < n; start += 8) {
++      const room = await createRoom(origin, "Load " + start);
++      rooms.push(room.id);
++      for (let i = 0; i < 8; i++) stops.push(await joinBot(origin, room.id, start + i + 1));
++    }
++    await sleep(8500);
++    const response = await fetch(origin + "/api/stats", { signal: AbortSignal.timeout(4000) });
++    const stats = (await response.json()).filter(match => rooms.includes(match.room));
++    if (stats.length !== rooms.length) throw new Error("Some load-test rooms are unavailable");
++    const max = key => Math.max(...stats.map(match => match[key]));
++    rows.push({ clients: n, rooms: rooms.length, p99: max("p99TickMs"), max: max("maxTickMs"),
++      meanPhysics: max("meanPhysicsMs"), meanTick: max("meanTickMs"), jitter: max("maxJitterMs") });
++  } finally { await Promise.all(stops.map(stop => stop())); }
++}
++console.table(rows);
++const exceed = rows.find(row => row.max > 33);
++console.log(exceed ? `First sampled tick over 33 ms: ${exceed.clients} clients` : "No sampled tick exceeded 33 ms through 128 clients.");
++if (process.argv[2]) await writeFile(process.argv[2], JSON.stringify(rows, null, 2) + "\n");
+diff --git a/scripts/profile.mjs b/scripts/profile.mjs
+new file mode 100644
+index 0000000..a0b5656
+--- /dev/null
++++ b/scripts/profile.mjs
+@@ -0,0 +1,143 @@
++import { writeFile } from "node:fs/promises";
++import { setTimeout as sleep } from "node:timers/promises";
++import { chromium } from "@playwright/test";
++import { createRoom, joinBot, localOrigin } from "./bots.mjs";
++
++const origin = localOrigin(process.env.ORIGIN ?? "http://127.0.0.1:3000");
++const prefix = process.argv[2] ?? "docs/lab-07-after";
++const q = (a, p) => a.toSorted((x, y) => x - y)[Math.ceil(a.length * p) - 1] ?? 0;
++const quantiles = a => [q(a, .5), q(a, .95), q(a, .99)];
++const escape = s => String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
++function flame({ nodes, samples, timeDeltas }) {
++  const parents = new Map(nodes.flatMap(n => (n.children ?? []).map(c => [c, n.id])));
++  const names = new Map(nodes.map(n => [n.id, n.callFrame.functionName || "(anonymous)"]));
++  let best = 0, busy = 0;
++  for (let index = 0; index < samples.length; index += 80) {
++    const count = samples.slice(index, index + 180).filter(id => names.get(id) !== "(idle)").length;
++    if (count > busy) { best = index; busy = count; }
++  }
++  const slice = samples.slice(best, best + 180), deltas = timeDeltas.slice(best, best + 180);
++  const total = deltas.reduce((n, d) => n + Math.max(0, d), 0);
++  let x = 24;
++  const boxes = [];
++  for (const [i, sample] of slice.entries()) {
++    const stack = [];
++    for (let id = sample; id; id = parents.get(id)) stack.unshift(id);
++    const w = 950 * Math.max(0, deltas[i]) / total;
++    for (const [row, id] of stack.slice(0, 14).entries()) {
++      const y = 70 + row * 21, key = row + ":" + id;
++      const previous = boxes.findLast(box => box.row === row);
++      if (previous?.key === key && Math.abs(previous.x + previous.w - x) < .01) previous.w += w;
++      else boxes.push({ x, y, w, row, key, name: names.get(id), id });
++    }
++    x += w;
++  }
++  const palette = ["#fbc56b", "#a2c5ff", "#87cfbc", "#f29e93", "#c8b7ff"];
++  const chart = boxes.map(({ x, y, w, id, name }) =>
++    `<rect x="${x}" y="${y}" width="${w}" height="20" fill="${palette[id % palette.length]}"><title>${escape(name)}</title></rect>` +
++    (w > 60 ? `<text x="${x + 3}" y="${y + 14}" font-size="10">${escape(name.slice(0, Math.floor(w / 6)))}</text>` : "")).join("");
++  return `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="370" font-family="system-ui"><rect width="1000" height="370" fill="#172237"/><text x="24" y="27" fill="white" font-size="20">Chrome DevTools CPU profile · 8 bots</text><text x="24" y="50" fill="white" font-size="13">Call stacks over a selected ${(total / 1000).toFixed(1)} ms window</text>${chart}</svg>`;
++}
++const browser = await chromium.launch();
++const stops = [];
++try {
++  const { id } = await createRoom(origin, "Lab 07 profile");
++  for (let slot = 1; slot <= 7; slot++) stops.push(await joinBot(origin, id, slot));
++  const page = await browser.newPage({ viewport: { width: 1000, height: 760 } });
++  await page.goto(origin);
++  await page.locator("#load-start").click();
++  await page.locator("[name=player]").fill("Bot 8");
++  await page.locator("[name=room]").selectOption(id);
++  await page.locator("#lobby button").click();
++  await page.waitForFunction(() => Number(document.querySelector("#netgraph").dataset.tick) > 5);
++  const cdp = await page.context().newCDPSession(page);
++  const trace = [];
++  cdp.on("Tracing.dataCollected", ({ value }) => { for (const event of value) trace.push(event); });
++  const tracingDone = new Promise(resolve => cdp.once("Tracing.tracingComplete", resolve));
++  await cdp.send("Profiler.enable");
++  await cdp.send("Profiler.setSamplingInterval", { interval: 1000 });
++  await cdp.send("HeapProfiler.startSampling", { samplingInterval: 4096, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
++  await cdp.send("Profiler.start");
++  await cdp.send("Tracing.start", { categories: "devtools.timeline,v8,disabled-by-default-v8.gc", transferMode: "ReportEvents" });
++  await page.evaluate(() => {
++    window.lab07Frames = [];
++    let last;
++    function frame(time) {
++      if (last !== undefined) window.lab07Frames.push(time - last);
++      last = time;
++      window.lab07Raf = requestAnimationFrame(frame);
++    }
++    window.lab07Raf = requestAnimationFrame(frame);
++  });
++  const start = performance.now();
++  for (let phase = 0; phase < 12; phase++) {
++    const turn = phase % 2 ? "d" : "a", fire = phase % 3 ? "Space" : "h";
++    for (const key of ["w", turn, fire]) await page.keyboard.down(key);
++    await sleep(Math.max(0, start + (phase + 1) * 2500 - performance.now()));
++    for (const key of ["w", turn, fire]) await page.keyboard.up(key);
++  }
++  const frames = await page.evaluate(() => {
++    cancelAnimationFrame(window.lab07Raf);
++    return window.lab07Frames;
++  });
++  await cdp.send("Tracing.end");
++  await tracingDone;
++  const { profile: cpu } = await cdp.send("Profiler.stop");
++  const { profile: heap } = await cdp.send("HeapProfiler.stopSampling");
++  const renderer = trace.find(e => e.name === "FireAnimationFrame" && e.ph === "X");
++  const main = renderer ? trace.filter(e => e.pid === renderer.pid && e.tid === renderer.tid) : [];
++  const gc = main.filter(e => /^(MinorGC|MajorGC)$/.test(e.name) && e.ph === "X").map(e => e.dur / 1000);
++  const callbacks = main.filter(e => e.name === "FireAnimationFrame" && e.ph === "X" && e.dur >= 50).map(e => e.dur / 1000);
++  const allocations = new Map();
++  function visit(node) {
++    const name = node.callFrame.functionName || "(anonymous)";
++    if (node.selfSize && node.callFrame.url.includes("/assets/")) allocations.set(name, (allocations.get(name) ?? 0) + node.selfSize);
++    for (const child of node.children) visit(child);
++  }
++  visit(heap.head);
++
++  // Offload the real percentile calculation once the capture is complete.
++  const trial = await page.evaluate(async data => {
++    function summarize(samples) {
++      samples.sort();
++      return [.5, .95, .99].map(p => samples[Math.ceil(samples.length * p) - 1]);
++    }
++    const url = URL.createObjectURL(new Blob([`onmessage=e=>postMessage((${summarize})(e.data));`], { type: "text/javascript" }));
++    const worker = new Worker(url);
++    const local = [], dispatch = [], roundTrip = [];
++    try {
++      for (let i = 0; i < 20; i++) {
++        const input = Float64Array.from(data), copy = input.slice();
++        let t = performance.now();
++        const expected = summarize(input);
++        local.push(performance.now() - t);
++        const done = new Promise(resolve => { worker.onmessage = e => resolve(e.data); });
++        t = performance.now();
++        worker.postMessage(copy, [copy.buffer]);
++        dispatch.push(performance.now() - t);
++        const output = await done;
++        roundTrip.push(performance.now() - t);
++        if (JSON.stringify(output) !== JSON.stringify(expected)) throw Error("Worker mismatch");
++      }
++      return { local, dispatch, roundTrip };
++    } finally { worker.terminate(); URL.revokeObjectURL(url); }
++  }, frames);
++  if (!frames.length || !callbacks.length || !cpu.samples.length) throw new Error("Incomplete profile");
++  const data = {
++    chromium: browser.version(), bots: 8, seconds: 30, frames: frames.length,
++    frameMs: quantiles(frames), callbackMs: quantiles(callbacks),
++    gc: { count: gc.length, max: Math.max(0, ...gc), total: gc.reduce((a, b) => a + b, 0) },
++    allocations: [...allocations].sort((a, b) => b[1] - a[1]).slice(0, 5),
++    worker: Object.fromEntries(Object.entries(trial).map(([k, v]) => [k, q(v, .5)])),
++  };
++  await writeFile(prefix + ".json", JSON.stringify(data, null, 2) + "\n");
++  const svg = flame(cpu);
++  await writeFile(prefix + ".svg", svg);
++  const capture = await browser.newPage({ viewport: { width: 1000, height: 370 } });
++  await capture.setContent('<body style="margin:0">' + svg);
++  await capture.screenshot({ path: prefix + ".png" });
++  console.log(data);
++} finally {
++  await browser.close();
++  await Promise.all(stops.map(stop => stop()));
++}
+diff --git a/scripts/report.mjs b/scripts/report.mjs
+new file mode 100644
+index 0000000..31b28f5
+--- /dev/null
++++ b/scripts/report.mjs
+@@ -0,0 +1,65 @@
++import { readFile, writeFile } from "node:fs/promises";
++
++const read = async path => JSON.parse(await readFile(path, "utf8"));
++const [before, after, load, coverage] = await Promise.all([
++  read("docs/lab-07-before.json"), read("docs/lab-07-after.json"),
++  read("docs/lab-07-load.json"), read("coverage/coverage-summary.json"),
++]);
++const ms = n => n.toFixed(3);
++const trio = values => values.map(ms).join(" / ");
++const first = load.find(row => row.max > 33);
++const max = Math.max(34, ...load.map(row => row.max));
++const x = i => 90 + i * 175;
++const y = n => 260 - 202 * n / max;
++const points = field => load.map((r, i) => `${x(i)},${y(r[field])}`).join(" ");
++const chart = `<svg xmlns="http://www.w3.org/2000/svg" width="700" height="325" viewBox="0 0 700 325" font-family="system-ui">
++<rect width="700" height="325" rx="8" fill="#172237"/>
++<text x="30" y="32" fill="white" font-size="18">Server tick under WebSocket load (ms)</text>
++<path d="M75 53V260H642" fill="none" stroke="#b1bdd0"/>
++<path d="M75 ${y(33)}H642" stroke="#f6a97e" stroke-dasharray="5 5"/>
++<text x="80" y="${y(33) - 5}" fill="#f6a97e" font-size="12">33 ms</text>
++<polyline points="${points("p99")}" fill="none" stroke="#75defa" stroke-width="3"/><polyline points="${points("max")}" fill="none" stroke="#ffee90" stroke-width="3"/>
++${load.map((row, i) => `<text x="${x(i)}" y="280" fill="white" text-anchor="middle">${row.clients}</text><circle cx="${x(i)}" cy="${y(row.max)}" r="4" fill="#ffee90"/><circle cx="${x(i)}" cy="${y(row.p99)}" r="4" fill="#75defa"/>`).join("")}
++<text x="85" y="307" fill="#75defa">p99 tick</text><text x="185" y="307" fill="#ffee90">max tick</text><text x="530" y="307" fill="white">Clients</text></svg>`;
++await writeFile("docs/lab-07-load.svg", chart);
++const source = row => row.allocations.map(([name, bytes]) =>
++  `${name.replace(/[|<>]/g, "")} (${(bytes / 1024).toFixed(1)} KiB)`).slice(0, 3).join(", ") || "немає вибірок";
++const report = `
++### Вимірювання
++
++30 с на збірку. Chromium ${after.chromium} у headless на одному runner Ubuntu. Сім клієнтів надсилали двійкові пакети input, восьмий керувався через клавіатуру в браузері. Профайлер Chrome записав стек CPU, вибірки алокацій і паузи GC на потоці рендерера. Вибірки алокацій наведено в KiB, вони оцінюють обсяг виділеної пам’яті, а не кількість об’єктів.
++
++| Збірка | Кадрів | Інтервал rAF p50 / p95 / p99, мс | Callback рендерера p50 / p95 / p99, мс | GC, кількість | GC, сума / максимум, мс |
++| --- | ---: | ---: | ---: | ---: | ---: |
++| До, lab-06 | ${before.frames} | ${trio(before.frameMs)} | ${trio(before.callbackMs)} | ${before.gc.count} | ${ms(before.gc.total)} / ${ms(before.gc.max)} |
++| Після, lab-07 | ${after.frames} | ${trio(after.frameMs)} | ${trio(after.callbackMs)} | ${after.gc.count} | ${ms(after.gc.total)} / ${ms(after.gc.max)} |
++
++p99 роботи callback ${after.callbackMs[2] < 16.7 ? "вклався" : "не вклався"} у 16,7 мс. p99 інтервалу між кадрами ${after.frameMs[2] < 16.7 ? "вклався" : "не вклався"} у 16,7 мс. Інтервал rAF включає очікування наступного кадру, планування ОС та витрати профайлера. Найдовша зафіксована пауза GC після змін склала **${ms(after.gc.max)} мс**.
++
++Найбільші вибірки алокацій з клієнтського bundle до змін — ${source(before)}. Після змін — ${source(after)}. Серверна симуляція перевикористовує кулі й набори частинок, координати оновлюються на місці. Зберегли хеш детермінізму з lab-06.
++
++![До. Стек викликів, записаний Chrome DevTools CPU Profiler](docs/lab-07-before.png)
++
++![Після. Стек викликів, записаний Chrome DevTools CPU Profiler](docs/lab-07-after.png)
++
++### Web Worker
++
++Винесли сортування і підрахунок перцентилів профілю в експериментальний Worker. У 20 парних спробах медіана розрахунку на головному потоці склала ${ms(after.worker.local)} мс, відправлення з transferable buffer — ${ms(after.worker.dispatch)} мс, повний обмін із Worker — ${ms(after.worker.roundTrip)} мс. Ця операція виконується після запису, тому Worker залишається лише у відтворюваному профільному експерименті. Ігровий потік і кадри не залежать від обміну повідомленнями з Worker.
++
++### Навантаження сервера
++
++Клієнти заходять групами по вісім, як у звичайній грі. Для кожного рівня навантаження даємо всім кімнатам працювати 8,5 с. У таблиці беремо найвище значення кожної метрики серед кімнат.
++
++| Клієнти | Кімнати | p99 кроку, мс | Максимум кроку, мс | Найбільший середній час фізики, мс | Найбільший середній час кроку, мс |
++| ---: | ---: | ---: | ---: | ---: | ---: |
++${load.map(row => `| ${row.clients} | ${row.rooms} | ${ms(row.p99)} | ${ms(row.max)} | ${ms(row.meanPhysics)} | ${ms(row.meanTick)} |`).join("\n")}
++
++${first ? `Перший рівень, на якому окремий крок перевищив 33 мс — ${first.clients} клієнтів.` : "У цьому прогоні крок не перевищив 33 мс до 128 клієнтів включно."} Колізії залишили попарними. У навантаженні вимірювали весь крок фізики, включно з колізіями, та повний крок із пакуванням і розсилкою знімків.
++
++![Графік часу кроку при 8, 32, 64 та 128 клієнтах](docs/lab-07-load.svg)
++
++Покриття shared/ за рядками становить **${coverage.total.lines.pct} %**, за інструкціями — **${coverage.total.statements.pct} %**, за функціями — **${coverage.total.functions.pct} %**. Вихідні JSON і профілі лежать у docs/.
++`;
++const path = "README.md";
++const readme = (await readFile(path, "utf8")).split("<!-- lab07-measurements -->")[0].trimEnd();
++await writeFile(path, readme + "\n\n<!-- lab07-measurements -->\n" + report);
+diff --git a/server/match.ts b/server/match.ts
+index ebae69d..cac450b 100644
+--- a/server/match.ts
++++ b/server/match.ts
+@@ -17,7 +17,8 @@ export class Match {
+   tick = tickNumber.parse(0);
+   room: Room;
+   send: typeof send;
+-  #timings: { duration: number; jitter: number }[] = [];
++  #timings: { duration: number; physics: number; jitter: number }[] = [];
++  #inputs = new Map<string, Controls>();
+   #timer;
+   #target = performance.now() + period;
+ 
+@@ -43,18 +44,19 @@ export class Match {
+ 
+   step() {
+     const start = performance.now();
+-    const inputs = new Map<string, Controls>();
++    this.#inputs.clear();
+     for (const player of this.room.players.values()) {
+-      const first = [...player.inputs.values()].reduce<Input | undefined>((oldest, item) =>
+-        !oldest || item.seq < oldest.seq ? item : oldest, undefined);
+-      const input = first;
++      let input: Input | undefined;
++      for (const item of player.inputs.values()) if (!input || item.seq < input.seq) input = item;
+       if (input) {
+         player.inputs.delete(input.seq);
+         player.ack = input.seq;
+       }
+-      inputs.set(player.id, input ?? IDLE);
++      this.#inputs.set(player.id, input ?? IDLE);
+     }
+-    this.world.step(DT, inputs);
++    const simulationStart = performance.now();
++    this.world.step(DT, this.#inputs);
++    const physics = performance.now() - simulationStart;
+     this.world.drainEvents();
+     this.tick = tickNumber.parse((this.tick + 1) >>> 0);
+     for (const player of this.room.players.values()) {
+@@ -66,7 +68,7 @@ export class Match {
+       const wire = player.binary ? encodeSnapshot(packet) : packet;
+       player.link.schedule(() => this.send(player.socket, wire));
+     }
+-    this.#timings.push({ duration: performance.now() - start, jitter: Math.abs(start - this.#target) });
++    this.#timings.push({ duration: performance.now() - start, physics, jitter: Math.abs(start - this.#target) });
+     if (this.#timings.length > 300) this.#timings.shift();
+     this.#target += period;
+     if (start - this.#target > period * 4) this.#target = start + period;
+@@ -75,8 +77,12 @@ export class Match {
+ 
+   stats() {
+     const samples = this.#timings;
+-    const mean = (key: "duration" | "jitter") => samples.reduce((sum, value) => sum + value[key], 0) / Math.max(1, samples.length);
++    const mean = (key: "duration" | "jitter" | "physics") => samples.reduce((sum, value) => sum + value[key], 0) / Math.max(1, samples.length);
++    const durations = samples.map(({ duration }) => duration).sort((a, b) => a - b);
+     return {
++      p99TickMs: durations[Math.ceil(durations.length * .99) - 1] ?? 0,
++      maxTickMs: durations.at(-1) ?? 0,
++      meanPhysicsMs: mean("physics"),
+       room: this.room.id, tick: this.tick, samples: samples.length, intervalMs: period,
+       meanTickMs: mean("duration"), meanJitterMs: mean("jitter"), maxJitterMs: Math.max(0, ...samples.map(item => item.jitter)),
+     };
+diff --git a/server/rate-limit.test.mjs b/server/rate-limit.test.mjs
+new file mode 100644
+index 0000000..bf19b94
+--- /dev/null
++++ b/server/rate-limit.test.mjs
+@@ -0,0 +1,34 @@
++import { afterEach, expect, test, vi } from "vitest";
++import { tokenBucket, parseClient, rawBuffer } from "./protocol.ts";
++import { readConfig } from "./config.ts";
++
++afterEach(() => vi.restoreAllMocks());
++test.each([1, 2, 3, 10, 32])("allows a burst of %i then blocks", capacity => {
++  vi.spyOn(performance, "now").mockReturnValue(0);
++  const take = tokenBucket(capacity, 2);
++  for (let i = 0; i < capacity; i++) expect(take()).toBe(true);
++  expect(take()).toBe(false);
++});
++test("restores tokens at the configured rate and caps the burst", () => {
++  const time = vi.spyOn(performance, "now").mockReturnValue(0);
++  const take = tokenBucket(1, 4);
++  expect(take()).toBe(true);
++  time.mockReturnValue(249);
++  expect(take()).toBe(false);
++  time.mockReturnValue(250);
++  expect(take()).toBe(true);
++  time.mockReturnValue(10_000);
++  expect(take()).toBe(true);
++  expect(take()).toBe(false);
++});
++test.each(["{", "null", '{"type":"probe","v":9,"nonce":1}', '{"type":"chat","v":1,"text":" "}'])("rejects JSON %s", text => {
++  expect(parseClient(Buffer.from(text))).toBeNull();
++});
++test("accepts fragmented WebSocket JSON and an ArrayBuffer", () => {
++  expect(parseClient([Buffer.from('{"v":1,"type":"'), Buffer.from('probe","nonce":9}')])).toEqual({ v: 1, type: "probe", nonce: 9 });
++  expect(rawBuffer(new Uint8Array([1, 2]).buffer)).toEqual(Buffer.from([1, 2]));
++});
++test("validates application configuration at startup", () => {
++  expect(readConfig({ PORT: "4000", HOST: "127.0.0.1", DEMO_SLOW: "1" })).toMatchObject({ port: 4000, demoSlow: true });
++  expect(() => readConfig({ PORT: "-1" })).toThrow();
++});
+diff --git a/test/simulation.test.mjs b/shared/determinism.test.mjs
+similarity index 89%
+rename from test/simulation.test.mjs
+rename to shared/determinism.test.mjs
+index 235a557..f05b9fa 100644
+--- a/test/simulation.test.mjs
++++ b/shared/determinism.test.mjs
+@@ -1,11 +1,11 @@
+ import assert from "node:assert/strict";
+ import { createHash } from "node:crypto";
+-import test from "node:test";
+-import { decodeInput, decodeSnapshot, encodeInput, encodeSnapshot } from "../shared/codec.ts";
+-import { DT, parseClientMessage } from "../shared/protocol.ts";
+-import { seededRandom } from "../shared/random.ts";
+-import { World } from "../shared/sim/world.ts";
+-import { entityState } from "../shared/state.ts";
++import { test } from "vitest";
++import { decodeInput, decodeSnapshot, encodeInput, encodeSnapshot } from "./codec.ts";
++import { DT, parseClientMessage } from "./protocol.ts";
++import { seededRandom } from "./random.ts";
++import { World } from "./sim/world.ts";
++import { entityState } from "./state.ts";
+ 
+ const command = seq => ({ type: "input", seq, turn: seq % 3 - 1, thrust: seq % 4 !== 0,
+   fire: seq % 6 === 0, homing: seq % 17 === 0 });
+diff --git a/shared/protocol.test.mjs b/shared/protocol.test.mjs
+new file mode 100644
+index 0000000..3ac91d9
+--- /dev/null
++++ b/shared/protocol.test.mjs
+@@ -0,0 +1,104 @@
++import { expect, test } from "vitest";
++import fc from "fast-check";
++import { decodeInput, decodeSnapshot, encodeInput, encodeSnapshot } from "./codec.ts";
++import { parseClientMessage, readInput, serverMessage, unreachable } from "./protocol.ts";
++import { ARENA, wrapShip } from "./sim/arena.ts";
++import { createShip, integrate } from "./sim/ship.ts";
++
++const cases = { numRuns: 120, seed: 4201 };
++const uint = fc.integer({ min: 0, max: 0xffffffff });
++const finite = fc.float({ min: -1200, max: 1200, noNaN: true, noDefaultInfinity: true });
++const controls = fc.record(controlsArbs());
++const input = fc.record({ type: fc.constant("input"), seq: fc.integer({ min: 1, max: 0xffffffff }), ...controlsArbs() });
++function controlsArbs() {
++  return { turn: fc.constantFrom(-1, 0, 1), thrust: fc.boolean(), fire: fc.boolean(), homing: fc.boolean() };
++}
++const entity = fc.record({
++  id: fc.integer({ min: 1, max: 0xffffffff }),
++  kind: fc.constantFrom("ship", "bullet", "asteroid", "pickup", "explosion"),
++  self: fc.boolean(), thrust: fc.boolean(), shield: fc.boolean(), homing: fc.boolean(),
++  x: finite, y: finite, vx: finite, vy: finite,
++  angle: fc.double({ min: 0, max: 2 * Math.PI, noNaN: true }),
++  radius: fc.integer({ min: 0, max: 255 }), hp: fc.integer({ min: 0, max: 255 }),
++  cooldown: fc.integer({ min: 0, max: 65535 }).map(v => v / 1000), shotSeq: uint,
++});
++const packet = fc.record({ tick: uint, ack: uint, score: uint, entities: fc.array(entity, { maxLength: 24 }) });
++
++test("input survives binary round trip", () => {
++  fc.assert(fc.property(input, cmd => expect(decodeInput(encodeInput(cmd))).toEqual(cmd)), cases);
++});
++
++test("snapshot survives binary round trip with int16 angle quantization", () => {
++  fc.assert(fc.property(packet, value => {
++    const decoded = decodeSnapshot(encodeSnapshot(value));
++    expect(decoded.tick).toBe(value.tick);
++    expect(decoded.ack).toBe(value.ack);
++    expect(decoded.score).toBe(value.score);
++    expect(decoded.entities).toHaveLength(value.entities.length);
++    for (const [i, e] of value.entities.entries()) {
++      const d = decoded.entities[i];
++      const difference = Math.atan2(Math.sin(d.angle - e.angle), Math.cos(d.angle - e.angle));
++      expect(Math.abs(difference)).toBeLessThanOrEqual(Math.PI / 65536 + 1e-12);
++      expect({ ...d, angle: e.angle }).toEqual(e);
++    }
++  }), cases);
++});
++
++test("frame length matches the documented wire layout", () => {
++  fc.assert(fc.property(input, packet, (cmd, value) => {
++    expect(encodeInput(cmd).byteLength).toBe(8);
++    expect(encodeSnapshot(value).byteLength).toBe(16 + value.entities.length * 32);
++  }), cases);
++});
++
++test("corrupt version and truncated frames produce controlled errors", () => {
++  fc.assert(fc.property(input, packet, (cmd, value) => {
++    const inWire = new Uint8Array(encodeInput(cmd));
++    inWire[0] = 255;
++    expect(() => decodeInput(inWire)).toThrow(RangeError);
++    expect(() => decodeSnapshot(encodeSnapshot(value).slice(0, -1))).toThrow(RangeError);
++  }), cases);
++});
++
++test("wrapped ships remain inside the arena through random commands", () => {
++  fc.assert(fc.property(finite, finite, fc.array(controls, { minLength: 1, maxLength: 80 }), (x, y, commands) => {
++    let ship = wrapShip({ ...createShip(), x, y });
++    for (const cmd of commands) {
++      ship = wrapShip(integrate(ship, cmd, 1 / 30));
++      expect(ship.x).toBeGreaterThanOrEqual(0);
++      expect(ship.x).toBeLessThan(ARENA.width);
++      expect(ship.y).toBeGreaterThanOrEqual(0);
++      expect(ship.y).toBeLessThan(ARENA.height);
++    }
++  }), cases);
++});
++
++test("Zod accepts legitimate inputs and rejects corrupted variants", () => {
++  fc.assert(fc.property(input, cmd => {
++    expect(parseClientMessage({ v: 1, ...cmd })).toEqual({ v: 1, ...cmd });
++    expect(parseClientMessage({ v: 1, ...cmd, thrust: "yes" })).toBeNull();
++    expect(parseClientMessage({ v: 2, ...cmd })).toBeNull();
++  }), cases);
++});
++
++test.each([null, [], {}, 3, "input", { type: "input", seq: -1 }, { type: "probe", v: 1, nonce: -1 }])("rejects malformed input %j", value => {
++  expect(readInput(value)).toBeNull();
++  expect(parseClientMessage(value)).toBeNull();
++});
++test.each([
++  { type: "joined", id: "A", replayId: "log", seed: 0 },
++  { type: "probe", nonce: 10 },
++  { type: "notice", text: "Info" },
++  { type: "chat", id: "A", name: "Pilot", text: "Hi" },
++  { type: "roster", players: [{ id: "A", name: "Pilot" }] },
++  { type: "snapshot", tick: 2, ack: 0, score: 0, entities: [] },
++])("parses server variant $type", value => expect(serverMessage.parse({ v: 1, ...value })).toEqual({ v: 1, ...value }));
++test("rejects input flags outside 3 bits", () => {
++  const wire = encodeInput({ type: "input", seq: 1, turn: 0, thrust: false, fire: false, homing: false });
++  new DataView(wire).setUint8(7, 8);
++  expect(() => decodeInput(wire)).toThrow(RangeError);
++});
++test("rejects invalid input passed to the encoder", () => expect(() => encodeInput({})).toThrow(RangeError));
++test("rejects a snapshot count larger than 1024", () => expect(() => encodeSnapshot({ tick: 1, ack: 0, score: 0, entities: Array(1025) })).toThrow(RangeError));
++test("rejects a malformed entity passed to the encoder", () => expect(() => encodeSnapshot({ tick: 1, ack: 0, score: 0, entities: [{ id: 0, kind: "asteroid" }] })).toThrow(RangeError));
++test("throws for an unreachable variant at runtime", () => expect(() => unreachable("other")).toThrow("Unhandled"));
+diff --git a/shared/sim/entity.ts b/shared/sim/entity.ts
+index 73d6e46..f8df3f7 100644
+--- a/shared/sim/entity.ts
++++ b/shared/sim/entity.ts
+@@ -6,13 +6,14 @@ import { entityId, IDLE, ZERO_SEQ, type Controls, type EntityId, type Kind } fro
+ import type { World } from "./world.ts";
+ 
+ export type SimEntity = Ship | Bullet | Asteroid | Explosion | Pickup;
++type Point = { x: number; y: number };
+ type Behavior = (entity: SimEntity, world: World, dt: number) => void;
+ 
+ export class Entity<K extends Kind> {
+   id: EntityId;
+   readonly kind: K;
+-  pos: Vector2;
+-  vel: Vector2;
++  readonly pos: Point;
++  readonly vel: Point;
+   angle: number;
+   radius: number;
+   alive: boolean;
+@@ -22,15 +23,18 @@ export class Entity<K extends Kind> {
+   constructor(kind: K, pos: Vector2, vel = new Vector2(), radius = 0) {
+     this.id = entityId.parse(++Entity.#id);
+     this.kind = kind;
+-    this.pos = pos;
+-    this.vel = vel;
++    this.pos = { x: pos.x, y: pos.y };
++    this.vel = { x: vel.x, y: vel.y };
+     this.angle = 0;
+     this.radius = radius;
+     this.alive = true;
+     this.behavior = null;
+   }
+ 
+-  update(dt: number) { this.pos = this.pos.add(this.vel.scale(dt)); }
++  update(dt: number) {
++    this.pos.x += this.vel.x * dt;
++    this.pos.y += this.vel.y * dt;
++  }
+ }
+ 
+ export class Ship extends Entity<"ship"> {
+@@ -62,19 +66,21 @@ export class Ship extends Entity<"ship"> {
+       { x: this.pos.x, y: this.pos.y, vx: this.vel.x, vy: this.vel.y, angle: this.angle },
+       input, dt,
+     );
+-    this.pos = new Vector2(ship.x, ship.y);
+-    this.vel = new Vector2(ship.vx, ship.vy);
++    this.pos.x = ship.x;
++    this.pos.y = ship.y;
++    this.vel.x = ship.vx;
++    this.vel.y = ship.vy;
+     this.angle = ship.angle;
+     this.thrust = ship.thrust;
+     this.cooldown = Math.max(0, this.cooldown - dt);
+   }
+ 
+-  fire() {
++  fire(acquire: () => Bullet = () => new Bullet(new Vector2(), new Vector2(), this.owner)) {
+     if (this.cooldown > 0) return null;
+     this.cooldown = 0.22;
+     const shot = shotFrom({ x: this.pos.x, y: this.pos.y, vx: this.vel.x, vy: this.vel.y, angle: this.angle });
+-    const bullet = new Bullet(new Vector2(shot.x, shot.y), new Vector2(shot.vx, shot.vy), this.owner);
+-    bullet.angle = this.angle;
++    const bullet = acquire();
++    bullet.reset(shot, this.owner, this.angle);
+     return bullet;
+   }
+ }
+@@ -89,6 +95,19 @@ export class Bullet extends Entity<"bullet"> {
+     this.owner = owner;
+   }
+ 
++  reset(shot: Point & { vx: number; vy: number }, owner: string, angle: number) {
++    this.pos.x = shot.x;
++    this.pos.y = shot.y;
++    this.vel.x = shot.vx;
++    this.vel.y = shot.vy;
++    this.owner = owner;
++    this.angle = angle;
++    this.ttl = 0.85;
++    this.shotSeq = ZERO_SEQ;
++    this.behavior = null;
++    this.alive = true;
++  }
++
+   update(dt: number) {
+     super.update(dt);
+     this.ttl -= dt;
+@@ -110,28 +129,44 @@ export class Asteroid extends Entity<"asteroid"> {
+     const limitY = ARENA.height - this.radius;
+     const hitX = x < this.radius || x > limitX;
+     const hitY = y < this.radius || y > limitY;
+-    this.pos = new Vector2(Math.min(limitX, Math.max(this.radius, x)), Math.min(limitY, Math.max(this.radius, y)));
+-    this.vel = new Vector2(hitX ? -this.vel.x : this.vel.x, hitY ? -this.vel.y : this.vel.y);
++    this.pos.x = Math.min(limitX, Math.max(this.radius, x));
++    this.pos.y = Math.min(limitY, Math.max(this.radius, y));
++    if (hitX) this.vel.x = -this.vel.x;
++    if (hitY) this.vel.y = -this.vel.y;
+     this.angle = wrap(this.angle + dt, Math.PI * 2);
+   }
+ }
+ 
+ export class Explosion extends Entity<"explosion"> {
+   ttl = 0.45;
+-  particles: { pos: Vector2; vel: Vector2 }[];
+-
+-  constructor(pos: Vector2, random: () => number) {
+-    super("explosion", pos);
+-    this.particles = Array.from({ length: 12 }, () => ({
+-      pos,
+-      vel: Vector2.fromAngle(random() * Math.PI * 2).scale(30 + 150 * random()),
+-    }));
++  readonly particles = Array.from({ length: 12 }, () => ({
++    pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 },
++  }));
++
++  constructor() { super("explosion", new Vector2()); }
++
++  reset(pos: Point, random: () => number) {
++    this.pos.x = pos.x;
++    this.pos.y = pos.y;
++    this.ttl = 0.45;
++    this.alive = true;
++    for (const particle of this.particles) {
++      const angle = random() * Math.PI * 2;
++      const speed = 30 + 150 * random();
++      particle.pos.x = pos.x;
++      particle.pos.y = pos.y;
++      particle.vel.x = Math.cos(angle) * speed;
++      particle.vel.y = Math.sin(angle) * speed;
++    }
+   }
+ 
+   update(dt: number) {
+     this.ttl -= dt;
+     this.alive = this.ttl > 0;
+-    for (const particle of this.particles) particle.pos = particle.pos.add(particle.vel.scale(dt));
++    for (const particle of this.particles) {
++      particle.pos.x += particle.vel.x * dt;
++      particle.pos.y += particle.vel.y * dt;
++    }
+   }
+ }
+ 
+@@ -146,14 +181,19 @@ export class Pickup extends Entity<"pickup"> {
+ 
+ export function homing(targetKind: Kind, acceleration = 30): Behavior {
+   return (entity, world, dt) => {
+-    let nearest;
++    let dx = 0, dy = 0;
+     let minDistance = Infinity;
+     for (const target of world.ofKind(targetKind)) {
+       if (!target.alive || target === entity || (entity.owner && target.owner === entity.owner)) continue;
+-      const delta = target.pos.sub(entity.pos);
+-      const distance = delta.dot(delta);
+-      if (distance < minDistance) { minDistance = distance; nearest = delta; }
++      const x = target.pos.x - entity.pos.x, y = target.pos.y - entity.pos.y;
++      const distance = x * x + y * y;
++      if (distance < minDistance) { minDistance = distance; dx = x; dy = y; }
++    }
++    const length = Math.hypot(dx, dy);
++    if (length) {
++      const inverse = 1 / length;
++      entity.vel.x += dx * inverse * (acceleration * dt);
++      entity.vel.y += dy * inverse * (acceleration * dt);
+     }
+-    if (nearest) entity.vel = entity.vel.add(nearest.normalize().scale(acceleration * dt));
+   };
+ }
+diff --git a/shared/sim/world.ts b/shared/sim/world.ts
+index 6a39e72..b612a65 100644
+--- a/shared/sim/world.ts
++++ b/shared/sim/world.ts
+@@ -1,6 +1,6 @@
+ import { ARENA, wrap } from "./arena.ts";
+ import { circlesOverlap, collisionPairs } from "./collision.ts";
+-import { Asteroid, Explosion, homing, Pickup, Ship, type SimEntity } from "./entity.ts";
++import { Asteroid, Bullet, Explosion, homing, Pickup, Ship, type SimEntity } from "./entity.ts";
+ import { seededRandom } from "../random.ts";
+ import { Vector2 } from "./vector.ts";
+ 
+@@ -10,12 +10,26 @@ export type WorldEvent =
+   | { type: "fired"; owner: string; id: EntityId }
+   | { type: "hit" | "exploded"; target: EntityId };
+ 
++const turnBullet = homing("ship", 720);
++const emptyInputs: ReadonlyMap<string, Controls> = new Map();
++
+ export class World {
+   #entities = new Map<EntityId, SimEntity>();
+   #nextId = 0;
+   #respawns = new Map<string, { remaining: number; score: number }>();
+   #events: WorldEvent[] = [];
+   #invulnerable = new Map<string, number>();
++  #bullets: Bullet[] = [];
++  #explosions: Explosion[] = [];
++  #updateList: SimEntity[] = [];
++  #takeBullet = () => this.#bullets.pop() ?? new Bullet(new Vector2(), new Vector2(), "");
++
++  #release(entity: SimEntity) {
++    this.#entities.delete(entity.id);
++    if (entity.kind === "bullet" && this.#bullets.length < 256) this.#bullets.push(entity);
++    if (entity.kind === "explosion" && this.#explosions.length < 32) this.#explosions.push(entity);
++  }
++
+   random: () => number;
+ 
+   constructor(random = seededRandom(1)) { this.random = random; }
+@@ -38,7 +52,7 @@ export class World {
+   removePlayer(owner: string) {
+     this.#respawns.delete(owner);
+     this.#invulnerable.delete(owner);
+-    for (const entity of this) if (entity.owner === owner) this.#entities.delete(entity.id);
++    for (const entity of this) if (entity.owner === owner) this.#release(entity);
+   }
+ 
+   scoreOf(owner: string) {
+@@ -66,7 +80,7 @@ export class World {
+     this.spawn(new Pickup(new Vector2(680, 300), ship => ship.protect()));
+   }
+ 
+-  step(dt: number, inputs: ReadonlyMap<string, Controls> = new Map()) {
++  step(dt: number, inputs: ReadonlyMap<string, Controls> = emptyInputs) {
+     for (const [owner, remaining] of this.#invulnerable) {
+       if (remaining <= dt) this.#invulnerable.delete(owner);
+       else this.#invulnerable.set(owner, remaining - dt);
+@@ -78,30 +92,33 @@ export class World {
+         this.#respawns.delete(owner);
+       }
+     }
+-    for (const entity of [...this]) {
++    for (const entity of this) this.#updateList.push(entity);
++    for (const entity of this.#updateList) {
+       if (!entity.alive) continue;
+       entity.behavior?.(entity, this, dt);
+       const input = (entity.owner === undefined ? undefined : inputs.get(entity.owner)) ?? IDLE;
+       if (entity.kind === "ship") entity.update(dt, input);
+       else entity.update(dt);
+       if (entity.kind === "ship" || entity.kind === "bullet") {
+-        entity.pos = new Vector2(wrap(entity.pos.x, ARENA.width), wrap(entity.pos.y, ARENA.height));
++        entity.pos.x = wrap(entity.pos.x, ARENA.width);
++        entity.pos.y = wrap(entity.pos.y, ARENA.height);
+       }
+       if (entity.kind === "ship" && input.fire) {
+-        const bullet = entity.fire();
++        const bullet = entity.fire(this.#takeBullet);
+         if (bullet) {
+           bullet.shotSeq = input.seq ?? ZERO_SEQ;
+-          if (input.homing) bullet.behavior = homing("ship", 720);
++          if (input.homing) bullet.behavior = turnBullet;
+           this.spawn(bullet);
+           this.#events.push({ type: "fired", owner: entity.owner, id: bullet.id });
+         }
+       }
+     }
++    this.#updateList.length = 0;
+     for (const [a, b] of collisionPairs(this)) if (a.alive && b.alive) {
+       this.#resolve(a, b);
+       this.#resolve(b, a);
+     }
+-    for (const entity of this) if (!entity.alive) this.#entities.delete(entity.id);
++    for (const entity of this) if (!entity.alive) this.#release(entity);
+   }
+ 
+   #resolve(a: SimEntity, b: SimEntity) {
+@@ -124,7 +141,9 @@ export class World {
+     } else if (--target.hp <= 0) this.despawn(target.id);
+     if (target.alive) return;
+     this.#events.push({ type: "exploded", target: target.id });
+-    this.spawn(new Explosion(target.pos, this.random));
++    const explosion = this.#explosions.pop() ?? new Explosion();
++    explosion.reset(target.pos, this.random);
++    this.spawn(explosion);
+     for (const ship of this.ofKind("ship")) if (ship.owner === attacker) ship.score++;
+     if (target.kind === "ship") this.#respawns.set(target.owner, { remaining: 2, score: target.score });
+   }
+diff --git a/shared/simulation.test.mjs b/shared/simulation.test.mjs
+new file mode 100644
+index 0000000..91f0671
+--- /dev/null
++++ b/shared/simulation.test.mjs
+@@ -0,0 +1,146 @@
++import { expect, test } from "vitest";
++import { DT } from "./protocol.ts";
++import { seededRandom } from "./random.ts";
++import { entityState } from "./state.ts";
++import { ARENA, interpolateShip, wrap, wrapShip } from "./sim/arena.ts";
++import { circlesOverlap, collisionPairs } from "./sim/collision.ts";
++import { Asteroid, Bullet, Explosion, Pickup, Ship, homing } from "./sim/entity.ts";
++import { createShip, integrate, shotFrom } from "./sim/ship.ts";
++import { Vector2 } from "./sim/vector.ts";
++import { World } from "./sim/world.ts";
++
++const idle = { turn: 0, thrust: false, fire: false };
++const point = (x, y) => new Vector2(x, y);
++const circle = (x, y, radius = 8, alive = true) => ({ pos: point(x, y), radius, alive });
++test.each([
++  ["zero", () => point().length(), 0],
++  ["length", () => point(3, 4).length(), 5],
++  ["add", () => point(2, 3).add(point(5, 2)), point(7, 5)],
++  ["subtract", () => point(5, 2).sub(point(2, 3)), point(3, -1)],
++  ["scale", () => point(2, 3).scale(3), point(6, 9)],
++  ["dot", () => point(2, 3).dot(point(2, -3)), -5],
++  ["normalize", () => point(4, 0).normalize(), point(1, 0)],
++  ["normalize zero", () => point().normalize(), point()],
++  ["rotate", () => point(1, 0).rotate(Math.PI / 2).y, 1],
++  ["angle", () => Vector2.fromAngle(0), point(1, 0)],
++])("vector %s", (_, fn, value) => expect(fn()).toEqual(value));
++
++test.each([[-1, 999], [0, 0], [1000, 0], [1001, 1], [2400, 400]])("wraps %i into %i", (x, expected) => {
++  expect(wrap(x, ARENA.width)).toBe(expected);
++  expect(wrapShip({ x, y: 600 }).x).toBe(expected);
++});
++test("interpolates through the short side of the seam", () => {
++  expect(interpolateShip({ x: 999, y: 598, angle: 0 }, { x: 1, y: 2, angle: 0 }, .5)).toEqual({ x: 0, y: 0, angle: 0 });
++});
++test.each([0, 1, -1])("integrates turn %s deterministically", turn => {
++  const ship = createShip();
++  const command = { ...idle, turn, thrust: true };
++  const next = integrate(ship, command, DT);
++  expect(integrate(ship, command, DT)).toEqual(next);
++  expect(next.thrust).toBe(true);
++  expect(ship.vx).toBe(0);
++});
++test("limits speed and applies drag", () => {
++  const fast = integrate({ ...createShip(), vx: 900 }, idle, DT);
++  expect(Math.hypot(fast.vx, fast.vy)).toBeCloseTo(430);
++  expect(integrate({ ...createShip(), vx: 100 }, idle, DT).vx).toBeLessThan(100);
++});
++test("shot starts ahead of the hull", () => expect(shotFrom(createShip())).toEqual({ x: 520, y: 300, vx: 560, vy: 0 }));
++test.each([[12, true], [16, true], [17, false], [999, true], [500, false]])("circle distance %i", (x, hit) => {
++  expect(circlesOverlap(circle(0, 5), circle(x, 5))).toBe(hit);
++});
++test("collision pairs exclude dead and zero-radius entities", () => {
++  const a = circle(0, 0), b = circle(4, 0);
++  expect([...collisionPairs([a, b, circle(1, 1, 9, false), circle(1, 1, 0)])]).toEqual([[a, b]]);
++});
++test.each([1, 2, 42, 4201])("worlds using seed %i match on every step", seed => {
++  const worlds = [new World(seededRandom(seed)), new World(seededRandom(seed))];
++  for (const world of worlds) { world.populate(); world.addPlayer("p"); }
++  for (let step = 0; step < 45; step++) {
++    for (const world of worlds) world.step(DT, new Map([["p", { turn: step % 3 - 1, thrust: true, fire: step % 5 === 0, homing: true }]]));
++    const [a, b] = worlds.map(world => [...world].map(e => entityState(e, "p")));
++    expect(a).toEqual(b);
++  }
++});
++test("different seeds place players in different positions", () => {
++  expect(new World(seededRandom(1)).safeSpot()).not.toEqual(new World(seededRandom(2)).safeSpot());
++});
++test("bullet pool resets TTL, ownership, input sequence, and behavior", () => {
++  const world = new World();
++  const pilot = world.addPlayer("p", 0, point(500, 300));
++  world.step(DT, new Map([["p", { ...idle, fire: true, seq: 20, homing: true }]]));
++  const [original] = world.ofKind("bullet");
++  const id = original.id;
++  world.despawn(id);
++  world.step(DT);
++  pilot.cooldown = 0;
++  world.removePlayer("p");
++  world.addPlayer("other", 0, point(80, 80));
++  world.step(DT, new Map([["other", { ...idle, fire: true }]]));
++  const [reused] = world.ofKind("bullet");
++  expect(reused).toBe(original);
++  expect(reused).toMatchObject({ owner: "other", shotSeq: 0, ttl: .85, behavior: null, alive: true });
++  expect(reused.id).not.toBe(id);
++  expect(world.get(id)).toBeUndefined();
++});
++test("ship shields absorb one hit and damage stops the ship", () => {
++  const ship = new Ship(point(1, 1));
++  ship.protect();
++  ship.damage();
++  expect(ship.hp).toBe(3);
++  for (let i = 0; i < 3; i++) ship.damage();
++  expect(ship.alive).toBe(false);
++});
++test("firing during the cooldown is rejected", () => {
++  const ship = new Ship(point(50, 50));
++  expect(ship.fire()).toBeInstanceOf(Bullet);
++  expect(ship.fire()).toBeNull();
++});
++test("expired bullet is removed", () => {
++  const world = new World(), bullet = world.spawn(new Bullet(point(1, 1), point(0, 0), "a"));
++  world.step(.9);
++  expect(world.get(bullet.id)).toBeUndefined();
++});
++test("asteroid reflects off both boundaries", () => {
++  const rock = new Asteroid(point(25, 25), point(-2, -4));
++  rock.update(1);
++  expect(rock.pos).toEqual({ x: 25, y: 25 });
++  expect(rock.vel).toEqual({ x: 2, y: 4 });
++});
++test("pickup is consumed and grants protection", () => {
++  const world = new World(), ship = world.addPlayer("p", 0, point(50, 50));
++  const pickup = world.spawn(new Pickup(point(50, 50), vessel => vessel.protect()));
++  world.step(DT);
++  expect(ship.shield).toBe(true);
++  expect(world.get(pickup.id)).toBeUndefined();
++});
++test("an explosion advances and resets pooled particle positions", () => {
++  const e = new Explosion();
++  const first = e.particles[0];
++  e.reset(point(8, 9), () => 0);
++  e.update(.1);
++  expect(first.pos).toEqual({ x: 11, y: 9 });
++  e.update(.4);
++  expect(e.alive).toBe(false);
++  e.reset(point(30, 50), () => 0);
++  expect(e.particles[0]).toBe(first);
++  expect(first.pos).toEqual({ x: 30, y: 50 });
++});
++test("homing accelerates toward the nearest enemy", () => {
++  const world = new World();
++  world.addPlayer("same", 0, point(30, 20));
++  world.addPlayer("other", 0, point(10, 80));
++  const bullet = new Bullet(point(10, 20), point(0, 0), "same");
++  homing("ship", 60)(bullet, world, .1);
++  expect(bullet.vel).toEqual({ x: 0, y: 6 });
++});
++test("asteroid hits can destroy a ship and it respawns with its score", () => {
++  const world = new World(), ship = world.addPlayer("p", 12, point(250, 250));
++  world.spawn(new Asteroid(point(250, 250), point(0, 0)));
++  world.step(.5); world.step(.5); world.step(.5);
++  expect(world.drainEvents().map(event => event.type)).toEqual(["hit", "hit", "hit", "exploded"]);
++  expect(world.scoreOf("p")).toBe(12);
++  world.step(2);
++  expect([...world.ofKind("ship")]).toHaveLength(1);
++  expect(world.scoreOf("p")).toBe(12);
++});
+diff --git a/vitest.config.mjs b/vitest.config.mjs
+new file mode 100644
+index 0000000..c7b4c10
+--- /dev/null
++++ b/vitest.config.mjs
+@@ -0,0 +1,12 @@
++import { defineConfig } from "vitest/config";
++export default defineConfig({
++  test: {
++    include: ["{client,server,shared}/**/*.test.mjs"],
++    coverage: {
++      provider: "v8",
++      include: ["shared/**/*.ts"],
++      reporter: ["text", "json-summary"],
++      thresholds: { lines: 85, statements: 85, functions: 85 },
++    },
++  },
++});
