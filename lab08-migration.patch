@@ -1,0 +1,1267 @@
+diff --git a/.dockerignore b/.dockerignore
+new file mode 100644
+index 0000000..36ad219
+--- /dev/null
++++ b/.dockerignore
+@@ -0,0 +1,12 @@
++.git
++.github
++**/node_modules
++**/dist
++**/*.test.mjs
++docs
++coverage
++test-results
++playwright-report
++logs
++.env
++.env.*
+diff --git a/.env.example b/.env.example
+index 00b0a70..3238dfc 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,3 +1,11 @@
+ PORT=3000
+ LOG_DIR=logs
+ DEMO_SLOW=0
++
++# Comma-separated exact origins. Render injects RENDER_EXTERNAL_URL.
++# PUBLIC_ORIGINS=https://your-game.onrender.com
++# Only set TRUST_PROXY=1 if the service is accessible exclusively through its trusted proxy.
++TRUST_PROXY=0
++MAX_IP_CONNECTIONS=192
++MAX_ROOMS=16
++MAX_PLAYERS=8
+diff --git a/Dockerfile b/Dockerfile
+new file mode 100644
+index 0000000..858794c
+--- /dev/null
++++ b/Dockerfile
+@@ -0,0 +1,29 @@
++FROM node:24-alpine AS build
++WORKDIR /app
++COPY package.json package-lock.json ./
++COPY client/package.json client/package.json
++COPY server/package.json server/package.json
++COPY shared/package.json shared/package.json
++RUN npm ci --no-audit --no-fund
++COPY client ./client
++COPY shared ./shared
++RUN npm run build && npm prune --omit=dev --no-audit --no-fund
++
++FROM node:24-alpine
++ARG BUILD_SHA
++LABEL org.opencontainers.image.source="https://github.com/Zuffull/orbital-arena-js" \
++      org.opencontainers.image.revision=$BUILD_SHA
++ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 BUILD_SHA=$BUILD_SHA LOG_DIR=/app/logs
++WORKDIR /app
++COPY --from=build --chown=node:node /app/node_modules ./node_modules
++COPY --from=build --chown=node:node /app/package.json ./package.json
++COPY --from=build --chown=node:node /app/client/dist ./client/dist
++COPY --chown=node:node client/package.json ./client/package.json
++COPY --chown=node:node server ./server
++COPY --chown=node:node shared ./shared
++RUN mkdir /app/logs && chown node:node /app/logs
++USER node
++EXPOSE 3000
++HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
++  CMD ["node", "-e", "fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
++CMD ["node", "server/index.ts"]
+diff --git a/client/index.html b/client/index.html
+index de51343..0d69f90 100644
+--- a/client/index.html
++++ b/client/index.html
+@@ -3,6 +3,9 @@
+   <head>
+     <meta charset="UTF-8" />
+     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++    <meta name="theme-color" content="#101e34" />
++    <link rel="manifest" href="/manifest.webmanifest" />
++    <link rel="apple-touch-icon" href="/assets/icon-192.png" />
+     <title>Orbital Arena</title>
+     <link rel="stylesheet" href="./src/style.css" />
+   </head>
+@@ -18,6 +21,7 @@
+         <button id="load-cancel" type="button" hidden>Скасувати</button>
+       </section>
+       <section id="lobby" class="panel" hidden>
++        <p id="lobby-notice" aria-live="polite"></p>
+         <h2>Лобі</h2>
+         <form>
+           <label>Позивний <input name="player" maxlength="24" required /></label>
+@@ -37,6 +41,13 @@
+         <div id="hud"></div>
+         <div id="status"></div>
+       </section>
++      <div id="touch-controls" aria-label="Керування польотом">
++        <button type="button" data-control="KeyA" aria-label="Ліворуч">←</button>
++        <button type="button" data-control="KeyW" aria-label="Тяга">↑</button>
++        <button type="button" data-control="KeyD" aria-label="Праворуч">→</button>
++        <button type="button" data-control="Space">Вогонь</button>
++        <button type="button" data-control="KeyH">Самонаведення</button>
++      </div>
+       <section id="network-panel" class="panel">
+         <output id="netgraph" aria-label="Мережеві показники"></output>
+         <label>Інтерполяція <input id="interpolation" type="range" min="35" max="250" value="100" /></label>
+diff --git a/client/public/assets/icon-192.png b/client/public/assets/icon-192.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..5eb2adb2b1591e9c08ebc919c497d6fc9c84d1b5
+GIT binary patch
+literal 1408
+zcmb`Hdo+}J7{`C_JI1&T3N?mVG`b*iTce43Gh<wK@mj;iQnAG_y4aai6ZLi@xeSU$
+z4ewCQx}A2TR=cs)D6(o~P;IrVshBy*CbULao&9hB-96{|KF@Q$=Q-#5*Yn9iLj%YL
+zR09A2IVh0*#p3+sqx9g#{<M7-1%Mb3#NNz3aDMFRja}xOO-~MYV>(?>x7}WQQ<oRR
+z^rAviytlakMBjdxn6&lFp@#ZxTCwY!=J~|I;<2ZyTX!~8_t4Z%_yg$F1+W;f!T}VS
+zV}S;UJ<+xpHVyi(HohrSJ2953=BM*qaKnT@J!y)ir0rA^@0OdmL}`f*<`fhwO$+bO
+z%rx3JM`5X9J?ZhH5K!VRU7Bl6l07ft#tOoai(={I^B#gG&5ZHTKL{DfewMtU6O>f$
+z>uHLFxkCAM#ui<)t=srfG8t)2WTtey!5lXZ1nhc3MN8~LpUsD7X1q5MFP6HYm*$rc
+zFm+>2_k^^uKtn$SE6a*5OKY^3wgS!FuED}}xYfd30~X^Bqg{E=pcB$)tT|*P6Pcs5
+zSu*SIzg&j&Qlb~Puovlwgfc^MhlOJcl|*IM5^SC-PejN@<vu40G!Z`<$sjt3wG2D!
+zbPB8Ypptpr<Q5$?j-xhNOuM%nzNt6~xRrfu#PGc}B(ttzv&ym3SVv>jnR6U8U5~4V
+zBHhkTnFbSDG$~dfGTswbOjzx-vOU6aFtGzu@t%5$n})T(ouOQY%AJdeU1$2{vr!mt
+z9r~5Hqe~AN2_912mO0~i9simYgLQ6OXF4I~@FSsTRvr*m3th7EsPO4S&9yAI9WC!7
+zQ=RZrPIYE!UM<6hkZd&_>?5?4hdUwCb=~S!K9;*?y?8b_o?FLvW$56Qn3pSza#<9J
+zw^O{SePfABqDjpvZ0W-GKh{%^AU))<@(c#DN9q9aoavy69igXi<TQbcH4Y@6J{>r-
+zBFqbUdPt8#Nxa}nHCO|O>_dhqWY|2vmV{r<s~|kid3CU=W1;aA%-xOL=V7P_{oHIc
+zPuDy@8KwbZLIpxXj+SMOCKJ0fN%3Z*!rADufiTr?{Sdmgc3Kz%xqrx)>x;A>IMw?2
+zNNe3?!RwdMMVk&g8kiz+Ghgdt$Gpyj-iQt}L!|pz*K`@oJ^~39Fo8yw=OGzAy8lr2
+z4?>$Oq8RA(Ppco~Z0XadO*KF=3yC89eMZ%&&?QR9><AMoBt-?cgTqGl*Y7dnjTl8_
+zJ(=kj;by+Wud0^oN)&IW7vz4E^4{rEpgbC?NDatH@em%<-SASNlA5_i@)7>H#pGI>
+zWJ}~TFC)p5O_}TK#}9f-Vtqk<NYa>nE)>%$n0zrmpbVe;s^fcM6!{XtcBjtQYHy#z
+z6OcNhEa(nfOtgKw-X}tQEB9L(&R0<a?~J@v!GYynp3Epw9*C>#S;O2d`WeKXyJyYJ
+z61@g-WlKcgydw%#7gj0STua-qd&UjEv?SkJEHuB7K@<44W4mpvKb~+CGE#s4=Y9SP
+z=U1qm;yYGC0~KnSq!i+gez!5@cnPqerHwaP5V)d2=c@uwim0>g>LdS1WZ@G;o4|2y
+z*T<_FX`P>5B~EIJ4pau`_!|><9QM0n*v}`9Huc|Sx>l9Q2TW1zOvqjjSTVc$+BC|@
+z(7(?C+Htok=ETb7$^C1QB-(k$%m9a8;^Yc>tl|HKrGK%lPx4@0^cgz*Se?yYBr6E=
+L4`ny|Z9n!ms(eS#
+
+literal 0
+HcmV?d00001
+
+diff --git a/client/public/assets/icon-512.png b/client/public/assets/icon-512.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..112560c221ca9482bd356dc796b90d48d78d1fb7
+GIT binary patch
+literal 5176
+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
+aJr4>L$+{V|{u0;`1kT&sww7&SCHxPQIOuc$
+
+literal 0
+HcmV?d00001
+
+diff --git a/client/public/manifest.webmanifest b/client/public/manifest.webmanifest
+new file mode 100644
+index 0000000..daaa86a
+--- /dev/null
++++ b/client/public/manifest.webmanifest
+@@ -0,0 +1,15 @@
++{
++  "id": "/",
++  "name": "Orbital Arena",
++  "short_name": "Orbital",
++  "lang": "uk",
++  "start_url": "/",
++  "scope": "/",
++  "display": "standalone",
++  "theme_color": "#080e1a",
++  "background_color": "#080e1a",
++  "icons": [
++    {"src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png"},
++    {"src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
++  ]
++}
+diff --git a/client/public/offline.html b/client/public/offline.html
+new file mode 100644
+index 0000000..427b811
+--- /dev/null
++++ b/client/public/offline.html
+@@ -0,0 +1,8 @@
++<!doctype html>
++<html lang="uk">
++<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Orbital Arena</title></head>
++<body style="background:#080e1a;color:#eef5ff;font-family:system-ui;margin:2rem">
++  <h1>Orbital Arena</h1><p>Для входу в мережевий матч потрібне з’єднання із сервером.</p>
++  <a style="color:#a5cbff" href="/">Спробувати ще раз</a>
++</body>
++</html>
+diff --git a/client/public/sw.js b/client/public/sw.js
+new file mode 100644
+index 0000000..0f24eaf
+--- /dev/null
++++ b/client/public/sw.js
+@@ -0,0 +1,14 @@
++const cacheName = "orbital-offline-v1";
++self.addEventListener("install", event => {
++  event.waitUntil(caches.open(cacheName).then(cache => cache.add("/offline.html")));
++});
++self.addEventListener("activate", event => {
++  event.waitUntil(caches.keys().then(keys => Promise.all(
++    keys.filter(key => key.startsWith("orbital-offline-") && key !== cacheName).map(key => caches.delete(key)),
++  )).then(() => self.clients.claim()));
++});
++self.addEventListener("fetch", event => {
++  if (event.request.mode === "navigate" && new URL(event.request.url).origin === self.location.origin) {
++    event.respondWith(fetch(event.request).catch(() => caches.match("/offline.html")));
++  }
++});
+diff --git a/client/src/entry.ts b/client/src/entry.ts
+index fb9e3db..44e04a5 100644
+--- a/client/src/entry.ts
++++ b/client/src/entry.ts
+@@ -8,6 +8,10 @@ import { createSpriteRenderer } from "./sprites.ts";
+ 
+ import { context2d, requireElement } from "./dom.ts";
+ 
++if (import.meta.env.PROD && window.isSecureContext && "serviceWorker" in navigator) {
++  window.addEventListener("load", () => { void navigator.serviceWorker.register("/sw.js").catch(console.warn); }, { once: true });
++}
++
+ const params = new URLSearchParams(location.search);
+ const game = requireElement("#game", HTMLElement);
+ 
+@@ -116,18 +120,26 @@ function setup() {
+     game.hidden = false;
+     requireElement("#room-title", HTMLElement).textContent = `${detail.room.name} · ${detail.player}`;
+     let online: ReturnType<typeof startOnline> | undefined;
+-    const connection = chat.enter(detail.room, detail.player, packet => online?.receive(packet));
++    const connection = chat.enter(detail.room, detail.player, packet => {
++      if (packet.type === "shutdown" || packet.type === "lost") {
++        returnToLobby(packet.text);
++        return;
++      }
++      online?.receive(packet);
++    });
+     online = startOnline(connection, createSpriteRenderer(atlas),
+       name => events.dispatchEvent(new CustomEvent(name)));
+     stopGame = online.stop;
+   });
+-  leave.addEventListener("click", () => {
++  function returnToLobby(reason = "") {
+     chat.leave();
+     stopGame?.();
+     stopGame = undefined;
+     game.hidden = true;
+     lobbyPanel.hidden = false;
++    requireElement("#lobby-notice", HTMLElement).textContent = reason;
+     lobby.start();
+-  });
++  }
++  leave.addEventListener("click", () => returnToLobby());
+   progress(0, 0);
+ }
+diff --git a/client/src/input.ts b/client/src/input.ts
+index 50ec261..f0a058c 100644
+--- a/client/src/input.ts
++++ b/client/src/input.ts
+@@ -16,8 +16,28 @@ export function createInput(target: Window) {
+     held.delete(event.code);
+   }
+ 
++  const touch = new Map<number, string>();
++  const touchControls = target.document.querySelector("#touch-controls");
++  function pointerDown(event: Event) {
++    if (!(event instanceof PointerEvent) || !(event.target instanceof HTMLButtonElement)) return;
++    const code = event.target.dataset.control;
++    if (!code || !controls.has(code)) return;
++    event.preventDefault();
++    event.target.setPointerCapture(event.pointerId);
++    touch.set(event.pointerId, code);
++    pressed.add(code);
++  }
++  function pointerUp(event: Event) {
++    if (event instanceof PointerEvent) touch.delete(event.pointerId);
++  }
++  touchControls?.addEventListener("pointerdown", pointerDown);
++  touchControls?.addEventListener("lostpointercapture", pointerUp);
++  touchControls?.addEventListener("pointerup", pointerUp);
++  touchControls?.addEventListener("pointercancel", pointerUp);
++
+   function clear() {
+     held.clear();
++    touch.clear();
+     pressed.clear();
+   }
+ 
+@@ -25,9 +45,13 @@ export function createInput(target: Window) {
+   target.addEventListener("keyup", keyup);
+   target.addEventListener("blur", clear);
+   return {
+-    isDown: (code: string) => held.has(code),
++    isDown: (code: string) => held.has(code) || (touch.size > 0 && [...touch.values()].includes(code)),
+     justPressed: (code: string) => pressed.delete(code),
+     destroy() {
++      touchControls?.removeEventListener("pointerdown", pointerDown);
++      touchControls?.removeEventListener("lostpointercapture", pointerUp);
++      touchControls?.removeEventListener("pointerup", pointerUp);
++      touchControls?.removeEventListener("pointercancel", pointerUp);
+       target.removeEventListener("keydown", keydown);
+       target.removeEventListener("keyup", keyup);
+       target.removeEventListener("blur", clear);
+diff --git a/client/src/lobby-view.ts b/client/src/lobby-view.ts
+index 882b204..aab95b8 100644
+--- a/client/src/lobby-view.ts
++++ b/client/src/lobby-view.ts
+@@ -10,7 +10,7 @@ export function connectLobby(lobby: Lobby, panel: HTMLElement) {
+ 
+   lobby.on("rooms", (detail) => {
+     const selected = room.value;
+-    room.replaceChildren(...detail.map(item => new Option(item.players === undefined ? item.name : item.name + " · " + item.players + "/8", item.id)));
++    room.replaceChildren(...detail.map(item => new Option(item.players === undefined ? item.name : item.name + " · " + item.players + "/" + (item.capacity ?? 8), item.id)));
+     if (detail.some(item => item.id === selected)) room.value = selected;
+     join.disabled = !detail.length;
+     status.textContent = detail.length ? "" : "Кімнат поки немає.";
+diff --git a/client/src/lobby.ts b/client/src/lobby.ts
+index 44271e2..2c48bee 100644
+--- a/client/src/lobby.ts
++++ b/client/src/lobby.ts
+@@ -3,7 +3,7 @@ import { fetchJson, withRetry } from "./assets.ts";
+ import { z } from "zod";
+ 
+ const roomsSchema = z.array(z.object({
+-  id: z.string(), name: z.string(), players: z.number().optional(),
++  id: z.string(), name: z.string(), players: z.number().optional(), capacity: z.number().optional(),
+ }));
+ export type RoomSummary = z.infer<typeof roomsSchema>[number];
+ type LobbyEvents = {
+diff --git a/client/src/network.ts b/client/src/network.ts
+index 4d22738..a3a831d 100644
+--- a/client/src/network.ts
++++ b/client/src/network.ts
+@@ -1,7 +1,7 @@
+ import { decodeSnapshot, encodeInput } from "../../shared/codec.ts";
+ import { VERSION as v, serverMessage, type Input, type ServerMessage } from "../../shared/protocol.ts";
+ 
+-export type RoomPacket = ServerMessage | { type: "status"; text: string };
++export type RoomPacket = ServerMessage | { type: "status" | "lost"; text: string };
+ export type Connection = ReturnType<typeof connectRoom>;
+ 
+ const permanent = new Set([1003, 1008, 1009]);
+@@ -58,7 +58,8 @@ export function connectRoom(room: string, name: string, receive: (packet: RoomPa
+   }
+ 
+   function connect() {
+-    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
++    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
++    const scheme = location.protocol === "http:" && loopback ? "ws:" : "wss:";
+     const connection = new WebSocket(scheme + "//" + location.host + "/ws?" + settings);
+     connection.binaryType = "arraybuffer";
+     socket = connection;
+@@ -101,10 +102,10 @@ export function connectRoom(room: string, name: string, receive: (packet: RoomPa
+     connection.addEventListener("close", event => {
+       if (stopped || connection !== socket) return;
+       disconnect();
+-      if (permanent.has(event.code)) {
++      if (permanent.has(event.code) || event.code === 1001 || attempts >= 3) {
+         stopped = true;
+         queue.length = 0;
+-        receive({ type: "status", text: "Р—'С”РґРЅР°РЅРЅСЏ Р·Р°РєСЂРёС‚Рѕ: " + event.reason });
++        receive({ type: "lost", text: "Р—'С”РґРЅР°РЅРЅСЏ Р·Р°РєСЂРёС‚Рѕ: " + event.reason });
+         return;
+       }
+       const delay = Math.min(5000, 250 * 2 ** attempts++);
+diff --git a/client/src/style.css b/client/src/style.css
+index 8ff18c7..58f01d4 100644
+--- a/client/src/style.css
++++ b/client/src/style.css
+@@ -26,3 +26,9 @@ button:hover { background: #213b5d; }
+ form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+ label { display: grid; gap: 4px; }
+ input, select { padding: 6px 8px; min-height: 32px; border: 1px solid #435978; border-radius: 6px; background: #15253c; color: inherit; }
++
++#lobby-notice:empty, #touch-controls { display: none; }
++@media (pointer: coarse) {
++  #touch-controls { display: flex; flex-wrap: wrap; gap: .4rem; margin: .5rem 0; }
++  #touch-controls button { min-height: 44px; touch-action: none; user-select: none; }
++}
+diff --git a/client/src/vite-env.d.ts b/client/src/vite-env.d.ts
+new file mode 100644
+index 0000000..2f7cbc9
+--- /dev/null
++++ b/client/src/vite-env.d.ts
+@@ -0,0 +1 @@
++interface ImportMeta { readonly env: { readonly PROD: boolean }; }
+diff --git a/e2e/hosting.spec.mjs b/e2e/hosting.spec.mjs
+new file mode 100644
+index 0000000..56bf683
+--- /dev/null
++++ b/e2e/hosting.spec.mjs
+@@ -0,0 +1,26 @@
++import { test, expect } from "@playwright/test";
++import { spawn } from "node:child_process";
++import { setTimeout as sleep } from "node:timers/promises";
++
++test("returns to lobby after unexpected process loss", async ({ page }) => {
++  test.skip(process.platform === "win32", "CI uses Linux SIGKILL");
++  const port = "38662";
++  const base = "http://127.0.0.1:" + port;
++  const server = spawn(process.execPath, ["server/index.ts"], {
++    env: { ...process.env, PORT: port }, stdio: "ignore",
++  });
++  try {
++    await expect.poll(() => fetch(base + "/ready").then(r => r.status).catch(() => 0)).toBe(200);
++    await page.goto(base);
++    await page.locator("#load-start").click();
++    await page.locator("[name=player]").fill("Pilot");
++    await page.locator("#lobby button").click();
++    await expect(page.locator("#roster")).toHaveText("Pilot");
++    server.kill("SIGKILL");
++    await expect(page.locator("#lobby")).toBeVisible({ timeout: 12_000 });
++    await expect(page.locator("#lobby-notice")).not.toBeEmpty();
++  } finally {
++    if (server.exitCode === null && !server.killed) server.kill("SIGTERM");
++    await sleep(100);
++  }
++});
+diff --git a/lab08-readme.md b/lab08-readme.md
+new file mode 100644
+index 0000000..03f36b4
+--- /dev/null
++++ b/lab08-readme.md
+@@ -0,0 +1,33 @@
++
++## Лабораторна 08. Публічна мережева гра
++
++[Docker release](https://github.com/Zuffull/orbital-arena-js/actions/workflows/release.yml) · [Контейнер GHCR](https://github.com/Zuffull/orbital-arena-js/pkgs/container/orbital-arena-js) · [Відео демонстрації](docs/lab-08-demo.mp4)
++
++Двоє гравців відкривають сторінку, вибирають одну кімнату та вводять різні імена. **W / ↑** — тяга, **A/D / ←/→** — поворот, **Space** — постріл, **H** — самонаведення. На телефоні є сенсорні кнопки. Android встановлює гру з меню Chrome, iOS — через «Поділитися» → «На початковий екран».
++
++```mermaid
++flowchart LR
++    A["Браузер A"] -->|HTTPS / WSS| P["TLS-проксі"]
++    B["Браузер B"] -->|HTTPS / WSS| P
++    P --> N["Один Node-процес"]
++    N --> R["Кімнати й симуляція"]
++    N --> M["Health, ready і metrics"]
++```
++
++У збірці Node працює під користувачем `node`. Образ використовує два етапи і запускає `node server/index.ts`. На звичайному старті `/health` показує SHA образу, `/ready` повертає 200, `/metrics` віддає метрики Prometheus. На SIGTERM готовність перемикається на 503, нові з’єднання відхиляються, клієнти отримують `shutdown` і код 1001, процес чекає дописування файлів. Pino пише рядки JSON з ідентифікаторами кімнати й гравця. Вміст чату не потрапляє в операційні логи.
++
++Додані тести на `Origin`, ліміти, роботу контейнера й відновлення лобі після зупинки процесу. Окремо перевіряється, що некоректне повідомлення закриває сокет і друга кімната продовжує отримувати знімки.
++
++### Деплой
++
++Теги `v*` запускають workflow з перевіркою Docker-образу та публікацією в GHCR. Після налаштування `RENDER_PUBLIC_URL` і секрету `RENDER_DEPLOY_HOOK` workflow запускає Render для точного тегу образу та звіряє SHA через HTTPS. Публічний браузер підключається лише через WSS. Дозволені адреси задаються списком точних Origin у `PUBLIC_ORIGINS`. На Render автоматично враховується `RENDER_EXTERNAL_URL`. `TRUST_PROXY=1` призначено для конфігурації, де трафік надходить лише через довірений проксі.
++
++### Межі
++
++За замовчуванням один процес вміщує **16 кімнат по 8 гравців**. Виміри lab-07 підтвердили 128 клієнтів у 16 локальних кімнатах на runner. Це вимір для того runner, результат хостингу залежить від його ресурсів. На одному процесі стан кімнати залишається в пам’яті. Після перезапуску гравці повертаються в лобі. PWA показує офлайн-екран, якщо немає підключення до матчу. Таблиці протоколу та навантаження доступні в розділах lab-05 і lab-07 вище.
++
++### Reflection
++
++- **Чому одна кімната має бути в одному процесі?** Авторитетний стан і черга input живуть у пам’яті. Кілька інстансів потребують маршрутизації гравців кімнати в той самий процес або окремої служби стану.
++- **Що відрізняє health від readiness?** Поки процес дописує лог і закриває клієнтів, він ще відповідає на health, але вже відхиляє нові матчі.
++- **Навіщо перевіряти Origin?** Щоб браузер зі сторонньої сторінки не відкрив доступ до ігрового WebSocket. Це обмеження доповнює ліміти й перевірку повідомлень.
+diff --git a/scripts/check-container.sh b/scripts/check-container.sh
+new file mode 100644
+index 0000000..3611f06
+--- /dev/null
++++ b/scripts/check-container.sh
+@@ -0,0 +1,30 @@
++#!/usr/bin/env bash
++set -euo pipefail
++image="$1"
++sha="$2"
++cid="$(docker run -d -p 127.0.0.1:38661:3000 \
++  -e PUBLIC_ORIGINS=http://127.0.0.1:38661 -e MAX_IP_CONNECTIONS=6 "$image")"
++log="$(mktemp)"
++trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true; cat "$log"; rm -f "$log"' EXIT
++for _ in {1..50}; do
++  if curl --fail --silent http://127.0.0.1:38661/health; then break; fi
++  sleep .2
++done
++test "$(docker exec "$cid" id -u)" != 0
++test "$(docker image inspect --format '{{.Size}}' "$image")" -lt 200000000
++docker exec "$cid" node -e 'try { require.resolve("vitest"); process.exit(1) } catch {}'
++EXPECT_SHA="$sha" node scripts/container-smoke.mjs > "$log" 2>&1 &
++smoke=$!
++for _ in {1..100}; do
++  if grep -q READY_FOR_STOP "$log"; then break; fi
++  if ! kill -0 "$smoke" 2>/dev/null; then wait "$smoke"; exit 1; fi
++  sleep .15
++done
++grep -q READY_FOR_STOP "$log"
++start="$(date +%s%3N)"
++docker stop -t 9 "$cid"
++elapsed="$(( $(date +%s%3N) - start ))"
++test "$elapsed" -lt 10000
++test "$(docker inspect --format '{{.State.ExitCode}}' "$cid")" = 0
++wait "$smoke"
++echo "docker stop completed in ${elapsed} ms"
+diff --git a/scripts/container-smoke.mjs b/scripts/container-smoke.mjs
+new file mode 100644
+index 0000000..c6c3c57
+--- /dev/null
++++ b/scripts/container-smoke.mjs
+@@ -0,0 +1,86 @@
++import assert from "node:assert/strict";
++import { once } from "node:events";
++import { setTimeout as sleep } from "node:timers/promises";
++import WebSocket from "ws";
++
++const base = process.env.ORIGIN ?? "http://127.0.0.1:38661";
++const allowed = { origin: base };
++const url = base.replace(/^http/, "ws") + "/ws";
++const sockets = [];
++async function join(id, name) {
++  const socket = new WebSocket(url, allowed);
++  sockets.push(socket);
++  await once(socket, "open", { signal: AbortSignal.timeout(4000) });
++  const joined = new Promise((resolve, reject) => {
++    const timer = setTimeout(() => reject(new Error("join timeout")), 5000);
++    socket.on("message", (payload, binary) => {
++      if (!binary && JSON.parse(payload).type === "joined") { clearTimeout(timer); resolve(); }
++    });
++  });
++  socket.send(JSON.stringify({ v: 1, type: "join", room: id, name }));
++  await joined;
++  return socket;
++}
++
++async function denied(origin, status) {
++  await new Promise((resolve, reject) => {
++    const socket = new WebSocket(url, { origin, handshakeTimeout: 4000 });
++    socket.once("unexpected-response", (_, response) => {
++      response.resume();
++      try { assert.equal(response.statusCode, status); resolve(); } catch (error) { reject(error); }
++    });
++    socket.once("error", reject);
++    socket.once("open", () => { socket.close(); reject(new Error("Unexpected upgrade")); });
++  });
++}
++
++try {
++  const health = await (await fetch(base + "/health")).json();
++  assert.equal(health.sha, process.env.EXPECT_SHA);
++  assert.equal((await fetch(base + "/ready")).status, 200);
++  await denied("https://wrong.example", 403);
++  const create = name => fetch(base + "/api/rooms", { method: "POST", body: JSON.stringify({ name }) }).then(r => r.json());
++  const [roomA, roomB] = await Promise.all([create("Lifecycle"), create("Isolated")]);
++  const a = await join(roomA.id, "Alpha"), b = await join(roomA.id, "Beta"), other = await join(roomB.id, "Gamma");
++  const roster = new Promise(resolve => {
++    a.on("message", (payload, binary) => {
++      if (!binary && JSON.parse(payload).type === "roster" && JSON.parse(payload).players.length === 1) resolve();
++    });
++  });
++  b.terminate();
++  await Promise.race([roster, sleep(3000).then(() => { throw new Error("Lost player stayed in roster"); })]);
++  const malformed = await join(roomA.id, "Malformed");
++  const closed = once(malformed, "close", { signal: AbortSignal.timeout(4000) });
++  malformed.send("not JSON");
++  assert.equal((await closed)[0], 1003);
++  const ticks = await once(other, "message", { signal: AbortSignal.timeout(4000) });
++  assert.equal(ticks[1], true);
++  const metrics = await (await fetch(base + "/metrics")).text();
++  assert.match(metrics, /orbital_players 2/);
++  assert.match(metrics, /orbital_ws_rejected_total [2-9]/);
++  const manifest = await (await fetch(base + "/manifest.webmanifest")).json();
++  assert.equal(manifest.display, "standalone");
++  const shutdown = await new Promise((resolve, reject) => {
++    let notice = false;
++    let duringDrain;
++    const timer = setTimeout(() => reject(new Error("Missing shutdown")), 20_000);
++    a.on("message", (payload, binary) => {
++      if (!binary && JSON.parse(payload).type === "shutdown") {
++        notice = true;
++        duringDrain = Promise.all([fetch(base + "/ready"), fetch(base + "/health")]).then(([ready, live]) => {
++          assert.equal(ready.status, 503);
++          assert.equal(live.status, 200);
++        });
++        void duringDrain.catch(reject);
++      }
++    });
++    a.on("close", code => {
++      clearTimeout(timer);
++      try { assert.equal(code, 1001); assert.equal(notice, true); void duringDrain.then(() => resolve(code), reject); } catch (error) { reject(error); }
++    });
++    console.log("READY_FOR_STOP");
++  });
++  console.log("Container shutdown notice and close code", shutdown);
++} finally {
++  for (const socket of sockets) socket.terminate();
++}
+diff --git a/scripts/record-release.mjs b/scripts/record-release.mjs
+new file mode 100644
+index 0000000..c9ffebc
+--- /dev/null
++++ b/scripts/record-release.mjs
+@@ -0,0 +1,80 @@
++import { chromium } from "@playwright/test";
++import { spawnSync } from "node:child_process";
++import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { setTimeout as sleep } from "node:timers/promises";
++
++const base = process.env.ORIGIN ?? "http://127.0.0.1:38663";
++const output = "docs/lab-08-demo.mp4";
++const folder = await mkdtemp(join(tmpdir(), "orbital-demo-"));
++const browser = await chromium.launch();
++const intro = [
++  ["Orbital Arena", "Лабораторна 08 · Публікація браузерної гри", "Вхід через HTTPS. Гравці однієї кімнати працюють із одним Node-процесом.", 17],
++  ["Як грати", "W / ↑ — тяга · A/D / ←/→ — поворот", "Пробіл — постріл. H — самонаведення. На телефоні є сенсорні кнопки.", 25],
++];
++const sections = [
++  ["Авторитетний сервер", "Input → 30 кроків/с → snapshot", "Клієнт прогнозує рух свого корабля і згладжує рух суперника. Бій, зіткнення й рахунок визначає сервер.", 24],
++  ["Docker і реліз", "/health · /ready · /metrics", "Тег v1.0.0 збирає образ і публікує в GHCR. У /health можна звірити SHA. SIGTERM повідомляє клієнтів і закриває сокети кодом 1001.", 25],
++  ["Тести і продуктивність", "Vitest · fast-check · Playwright", "Два браузери перевіряють рух і чат. У lab-07 перевірили до 128 з’єднань у 16 кімнатах, а також зібрали Chrome-профілі до й після.", 23],
++  ["Встановлення гри", "PWA · HTTPS · WSS", "Android: меню Chrome → Встановити. iPhone: меню «Поділитися» → На початковий екран. Для матчу потрібне підключення.", 22],
++];
++function ffmpeg(args) {
++  const result = spawnSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args], { stdio: "inherit" });
++  if (result.status !== 0) throw new Error("ffmpeg failed");
++}
++const segments = [];
++try {
++  const slides = await browser.newPage({ viewport: { width: 1280, height: 720 } });
++  const slide = async ([title, subtitle, body, duration]) => {
++    const index = segments.length;
++    const png = join(folder, index + ".png"), mp4 = join(folder, index + ".mp4");
++    await slides.setContent(`<!doctype html><meta charset=utf-8><style>
++      body {background:#101e34;color:#eef6ff;margin:92px;font:29px system-ui, sans-serif}
++      h1 {font-size:72px;margin:90px 0 20px;color:#78dfff} h2 {font-size:38px}
++      p {max-width:970px;line-height:1.5} small {color:#9eb3cc}
++      </style><small>ORBITAL ARENA · ДЕМОНСТРАЦІЯ</small><h1>${title}</h1><h2>${subtitle}</h2><p>${body}</p>`);
++    await slides.screenshot({ path: png });
++    ffmpeg(["-loop", "1", "-i", png, "-t", String(duration), "-r", "30", "-c:v", "libx264", "-threads", "2", "-pix_fmt", "yuv420p", mp4]);
++    segments.push(mp4);
++  };
++  for (const item of intro) await slide(item);
++  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, recordVideo: { dir: folder, size: { width: 1280, height: 720 } } });
++  const page = await ctx.newPage(), guest = await browser.newPage();
++  const response = await page.request.post(base + "/api/rooms", { data: { name: "Lab 08 демонстрація" } });
++  const room = await response.json();
++  for (const [pilot, name] of [[page, "Alpha"], [guest, "Beta"]]) {
++    await pilot.goto(base);
++    await pilot.locator("#load-start").click();
++    await pilot.locator("[name=player]").fill(name);
++    await pilot.locator("[name=room]").selectOption(room.id);
++    await pilot.locator("#lobby button").click();
++  }
++  await page.waitForFunction(() => document.querySelector("#roster")?.textContent.includes("Beta"));
++  await guest.locator("[name=message]").fill("Beta: бачимо один матч!");
++  await guest.locator("#chat button").click();
++  for (let i = 0; i < 8; i++) {
++    const key = i % 2 ? "d" : "a";
++    for (const player of [page, guest]) {
++      await player.keyboard.down("w");
++      await player.keyboard.down(key);
++      await player.keyboard.down(i % 3 ? "Space" : "h");
++    }
++    await sleep(6500);
++    for (const player of [page, guest]) for (const code of ["w", key, "Space", "h"]) await player.keyboard.up(code);
++  }
++  const video = page.video();
++  await ctx.close();
++  const gameplay = join(folder, "gameplay.mp4");
++  ffmpeg(["-i", await video.path(), "-t", "59", "-r", "30", "-c:v", "libx264", "-threads", "2", "-pix_fmt", "yuv420p", gameplay]);
++  segments.push(gameplay);
++  for (const item of sections) await slide(item);
++  const list = join(folder, "list.txt");
++  await writeFile(list, segments.map(path => `file '${path.replaceAll("\\", "/")}'`).join("\n") + "\n");
++  ffmpeg(["-f", "concat", "-safe", "0", "-i", list, "-c", "copy", "-movflags", "+faststart", output]);
++  const signature = await readFile(output);
++  if (signature.length < 100_000) throw new Error("Demo too short");
++} finally {
++  await browser.close();
++  await rm(folder, { recursive: true, force: true });
++}
+diff --git a/server/config.ts b/server/config.ts
+index 8606812..5379ee1 100644
+--- a/server/config.ts
++++ b/server/config.ts
+@@ -3,18 +3,40 @@ import { resolve } from "node:path";
+ import { fileURLToPath } from "node:url";
+ import { z } from "zod";
+ 
++const integer = (max: number) => z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(max));
++const origin = z.url().transform(value => new URL(value)).refine(
++  value => ["http:", "https:"].includes(value.protocol) && value.href === value.origin + "/",
++  "Expected HTTP(S) origin without path, auth or query",
++).transform(value => value.origin);
++
+ const schema = z.object({
+   PORT: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(65535)).prefault("3000"),
+   HOST: z.string().refine(host => isIP(host) !== 0, "Expected an IP address").default("127.0.0.1"),
+   LOG_DIR: z.string().refine(value => Boolean(value.trim()) && !value.includes("\0"), "Invalid path").default("logs"),
++  PUBLIC_ORIGINS: z.string().optional(),
++  RENDER_EXTERNAL_URL: origin.optional(),
++  MAX_IP_CONNECTIONS: integer(512).optional(),
++  MAX_ROOMS: integer(64).prefault("16"),
++  MAX_PLAYERS: integer(16).prefault("8"),
++  TRUST_PROXY: z.enum(["0", "1"]).default("0"),
++  BUILD_SHA: z.string().regex(/^(?:[0-9a-f]{40})?$/).optional(),
+   DEMO_SLOW: z.enum(["0", "1"]).default("0"),
+ });
+ 
+ export function readConfig(env: NodeJS.ProcessEnv = process.env) {
+-  const { HOST, PORT, LOG_DIR, DEMO_SLOW } = schema.parse(env);
++  const parsed = schema.parse(env);
++  const { HOST, PORT, LOG_DIR, DEMO_SLOW } = parsed;
++  const origins = new Set(
++    parsed.PUBLIC_ORIGINS?.split(",").map(value => origin.parse(value.trim())) ?? [],
++  );
++  if (parsed.RENDER_EXTERNAL_URL) origins.add(parsed.RENDER_EXTERNAL_URL);
++  const deployed = env.NODE_ENV === "production";
+   const root = fileURLToPath(new URL("..", import.meta.url));
+   return {
+     host: HOST, port: PORT, logDir: resolve(root, LOG_DIR),
++    origins, deployed, buildSha: parsed.BUILD_SHA || "local",
++    trustProxy: parsed.TRUST_PROXY === "1", maxIpConnections: parsed.MAX_IP_CONNECTIONS ?? (deployed ? 12 : 192),
++    maxRooms: parsed.MAX_ROOMS, maxPlayers: parsed.MAX_PLAYERS,
+     staticDir: resolve(root, "client/dist"), demoSlow: DEMO_SLOW === "1",
+   };
+ }
+diff --git a/server/hosting.test.mjs b/server/hosting.test.mjs
+new file mode 100644
+index 0000000..65360ad
+--- /dev/null
++++ b/server/hosting.test.mjs
+@@ -0,0 +1,33 @@
++import { expect, test } from "vitest";
++import { readConfig } from "./config.ts";
++import { acceptOrigin, clientAddress } from "./ws.ts";
++
++test("production requires an allowlisted origin on every upgrade", () => {
++  const policy = readConfig({ NODE_ENV: "production", RENDER_EXTERNAL_URL: "https://orbital.example.org" });
++  expect(acceptOrigin("https://orbital.example.org", policy)).toBe(true);
++  expect(acceptOrigin("http://orbital.example.org", policy)).toBe(false);
++  expect(acceptOrigin("https://orbital.example.org.evil.test", policy)).toBe(false);
++  expect(acceptOrigin(undefined, policy)).toBe(false);
++});
++
++test("development permits loopback Origin and command-line sockets", () => {
++  const policy = readConfig({});
++  expect(acceptOrigin("http://127.0.0.1:5173", policy)).toBe(true);
++  expect(acceptOrigin("http://localhost:5173", policy)).toBe(true);
++  expect(acceptOrigin(undefined, policy)).toBe(true);
++  expect(acceptOrigin("null", policy)).toBe(false);
++});
++
++test("an invalid origin, connection limit, or build SHA blocks startup", () => {
++  expect(() => readConfig({ PUBLIC_ORIGINS: "https://orbital.example.org/path" })).toThrow();
++  expect(() => readConfig({ MAX_IP_CONNECTIONS: "0" })).toThrow();
++  expect(() => readConfig({ MAX_PLAYERS: "200" })).toThrow();
++  expect(() => readConfig({ BUILD_SHA: "bad" })).toThrow();
++  expect(readConfig({ MAX_ROOMS: "3", MAX_PLAYERS: "6" })).toMatchObject({ maxRooms: 3, maxPlayers: 6 });
++});
++
++test("forwarded address is read only when the trusted proxy mode is enabled", () => {
++  const request = { headers: { "x-forwarded-for": "192.0.2.1, 192.0.2.2" }, socket: { remoteAddress: "127.0.0.1" } };
++  expect(clientAddress(request, false)).toBe("127.0.0.1");
++  expect(clientAddress(request, true)).toBe("192.0.2.2");
++});
+diff --git a/server/index.ts b/server/index.ts
+index 55d8c9f..024d579 100644
+--- a/server/index.ts
++++ b/server/index.ts
+@@ -10,13 +10,16 @@ import { z } from "zod";
+ import { boundedString } from "../shared/protocol.ts";
+ import { streamReplay } from "./replay.ts";
+ import { RoomManager } from "./rooms.ts";
+-import { attachSockets } from "./ws.ts";
++import { log } from "./log.ts";
++import { metrics, startMetrics } from "./metrics.ts";
++import { attachSockets, send } from "./ws.ts";
+ 
+ const roomBody = z.object({ name: boundedString(32) });
+ 
+ const mime: Record<string, string> = {
+   ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
+   ".json": "application/json", ".txt": "text/plain", ".svg": "image/svg+xml",
++  ".webmanifest": "application/manifest+json",
+   ".png": "image/png", ".wav": "audio/wav",
+ };
+ 
+@@ -56,14 +59,20 @@ async function serveStatic(root: string, path: string, req: IncomingMessage, res
+   if (!info.isFile()) return json(res, 404, { error: "Not found" });
+   const contentType = mime[extname(canonical)] || "application/octet-stream";
+   const type = /^(text\/|application\/json)/.test(contentType) ? contentType + "; charset=utf-8" : contentType;
+-  res.writeHead(200, { "Content-Type": type, "Content-Length": info.size });
++  res.writeHead(200, { "Content-Type": type, "Content-Length": info.size,
++    "Cache-Control": path === "/sw.js" || path === "/" ? "no-cache" : "public, max-age=300",
++    "X-Content-Type-Options": "nosniff",
++  });
+   if (req.method === "HEAD") res.end();
+   else await pipeline(createReadStream(canonical), res);
+ }
+ 
+ const config = readConfig();
+ await mkdir(config.logDir, { recursive: true });
+-const manager = new RoomManager(config.logDir);
++const manager = new RoomManager(config.logDir, config.maxRooms, config.maxPlayers);
++let ready = false;
++let stopping = false;
++const monitor = startMetrics();
+ 
+ async function route(req: IncomingMessage, res: ServerResponse) {
+   let path;
+@@ -73,7 +82,13 @@ async function route(req: IncomingMessage, res: ServerResponse) {
+     return json(res, 403, { error: "Forbidden path" });
+   }
+   const method = req.method;
+-  if (path === "/health" && method === "GET") return json(res, 200, { ok: true });
++  if (path === "/health" && method === "GET") return json(res, 200, { ok: true, sha: config.buildSha });
++  if (path === "/ready" && method === "GET") return json(res, ready ? 200 : 503, { ready });
++  if (path === "/metrics" && method === "GET") {
++    res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8" }).end(metrics(manager));
++    return;
++  }
++  if (!ready) return json(res, 503, { error: "Server not ready" });
+   if (path === "/api/stats" && method === "GET") return json(res, 200, [...matches.values()].map(match => match.stats()));
+   if (path === "/api/rooms" && method === "GET") return json(res, 200, manager.list());
+   if (path === "/api/rooms" && method === "POST") return createRoom(req, res, manager);
+@@ -94,35 +109,48 @@ const server = createServer((req, res) => {
+   void route(req, res).catch((error: unknown) => {
+     const code = error instanceof Error && "code" in error ? error.code : undefined;
+     if (res.destroyed || code === "ERR_STREAM_PREMATURE_CLOSE" || code === "ECONNRESET") return;
+-    console.error(error);
++    log.error({ err: error }, "HTTP request failed");
+     if (res.headersSent) res.destroy();
+     else json(res, 500, { error: "Internal error" });
+   });
+ });
+-const sockets = attachSockets(server, manager);
++const sockets = attachSockets(server, manager, config, () => ready);
+ server.on("error", error => {
+-  console.error("HTTP server:", error.message);
+-  process.exitCode = 1;
+-  sockets.close();
+-  void manager.close();
++  log.fatal({ err: error }, "HTTP server failed");
++  process.exit(1);
++});
++server.listen(config.port, config.host, () => {
++  ready = true;
++  log.info({ host: config.host, port: config.port, sha: config.buildSha }, "READY");
+ });
+-server.listen(config.port, config.host, () => console.log(`READY ${config.host}:${config.port}`));
+-
+-let stopping = false;
+ async function shutdown() {
+   if (stopping) return;
+   stopping = true;
+-  const httpClosed = new Promise<void>(resolve => server.close(() => resolve()));
+-  const wsClosed = new Promise<void>(resolve => sockets.close(() => resolve()));
+-  for (const socket of sockets.clients) socket.close(1001, "Server stopping");
++  ready = false;
++  clearInterval(monitor);
++  log.info("Draining connections");
++  for (const socket of sockets.clients) {
++    send(socket, { type: "shutdown", text: "Сервер завершує роботу. Повернення в лобі." });
++    socket.close(1001, "Server stopping");
++  }
++  const hard = setTimeout(() => {
++    log.fatal("Shutdown deadline exceeded");
++    process.exit(1);
++  }, 8500).unref();
+   const force = setTimeout(() => {
+     for (const socket of sockets.clients) socket.terminate();
+     server.closeAllConnections();
+-  }, 1500);
++  }, 1500).unref();
++  const wsClosed = new Promise<void>(resolve => sockets.close(() => resolve()));
++  // Keep health available briefly while readiness and new upgrades are already rejected.
++  const httpClosed = new Promise<void>(resolve => {
++    setTimeout(() => server.close(() => resolve()), 500);
++  });
+   await Promise.all([httpClosed, wsClosed]);
+-  clearTimeout(force);
+   await manager.close();
+-  console.log("STOPPED");
++  clearTimeout(force);
++  clearTimeout(hard);
++  log.info("STOPPED");
+ }
+ process.on("SIGINT", () => void shutdown());
+ process.on("SIGTERM", () => void shutdown());
+diff --git a/server/log.ts b/server/log.ts
+new file mode 100644
+index 0000000..0db2688
+--- /dev/null
++++ b/server/log.ts
+@@ -0,0 +1,10 @@
++import pino from "pino";
++
++export const log = pino({
++  base: undefined,
++  redact: ["password", "token", "key", "headers.authorization", "headers.cookie"],
++}, pino.destination({ sync: true }));
++
++process.on("uncaughtExceptionMonitor", (err, origin) => {
++  log.fatal({ err, origin }, "Uncaught exception");
++});
+diff --git a/server/metrics.ts b/server/metrics.ts
+new file mode 100644
+index 0000000..93d0307
+--- /dev/null
++++ b/server/metrics.ts
+@@ -0,0 +1,46 @@
++import { performance } from "node:perf_hooks";
++import { matches } from "./match.ts";
++import type { RoomManager } from "./rooms.ts";
++
++let messages = 0, bytes = 0, rejected = 0;
++let oldMessages = 0, oldBytes = 0;
++let last = performance.now();
++let lastLoop = performance.eventLoopUtilization();
++let messagesPerSecond = 0, bytesPerSecond = 0, eventLoop = 0;
++
++export const noteTraffic = (size: number) => { messages++; bytes += size; };
++export const noteRejection = () => { rejected++; };
++
++export function startMetrics() {
++  return setInterval(() => {
++    const now = performance.now(), seconds = (now - last) / 1000;
++    messagesPerSecond = (messages - oldMessages) / seconds;
++    bytesPerSecond = (bytes - oldBytes) / seconds;
++    const current = performance.eventLoopUtilization();
++    eventLoop = performance.eventLoopUtilization(current, lastLoop).utilization;
++    last = now;
++    oldMessages = messages;
++    oldBytes = bytes;
++    lastLoop = current;
++  }, 1000).unref();
++}
++
++export function metrics(manager: RoomManager): string {
++  const memory = process.memoryUsage(), counts = manager.counts();
++  const timings = [...matches.values()].map(match => match.stats());
++  const lines = {
++    orbital_players: counts.players,
++    orbital_rooms: counts.rooms,
++    orbital_ws_messages_total: messages,
++    orbital_ws_payload_bytes_total: bytes,
++    orbital_ws_rejected_total: rejected,
++    orbital_ws_messages_per_second: messagesPerSecond,
++    orbital_ws_payload_bytes_per_second: bytesPerSecond,
++    orbital_step_p99_seconds: Math.max(0, ...timings.map(s => s.p99TickMs)) / 1000,
++    orbital_event_loop_utilization_ratio: eventLoop,
++    process_resident_memory_bytes: memory.rss,
++    orbital_heap_used_bytes: memory.heapUsed,
++  };
++  return Object.entries(lines).map(([name, value]) =>
++    `# TYPE ${name} ${name.endsWith("_total") ? "counter" : "gauge"}\n${name} ${value}\n`).join("");
++}
+diff --git a/server/package.json b/server/package.json
+index ce00481..fb38358 100644
+--- a/server/package.json
++++ b/server/package.json
+@@ -5,6 +5,7 @@
+   "version": "1.0.0",
+   "dependencies": {
+     "ws": "8.18.3",
+-    "zod": "4.1.12"
++    "zod": "4.1.12",
++    "pino": "9.14.0"
+   }
+ }
+diff --git a/server/rooms.ts b/server/rooms.ts
+index 21977b6..0700b87 100644
+--- a/server/rooms.ts
++++ b/server/rooms.ts
+@@ -5,6 +5,7 @@ import { join } from "node:path";
+ import { Transform } from "node:stream";
+ import { pipeline } from "node:stream/promises";
+ 
++import { log } from "./log.ts";
+ import type { WebSocket } from "ws";
+ import type { Input, Seq } from "../shared/protocol.ts";
+ import type { createLink } from "./link.ts";
+@@ -34,7 +35,7 @@ export class Room extends EventEmitter<RoomEvents> {
+   logDone: Promise<void>;
+   #log;
+ 
+-  constructor(name: string, logDir: string) {
++  constructor(name: string, logDir: string, private readonly maximum = 8) {
+     super();
+     this.name = name;
+     this.replayId = this.id + "-" + Date.now();
+@@ -44,7 +45,7 @@ export class Room extends EventEmitter<RoomEvents> {
+         next(null, JSON.stringify(record) + "\n");
+       },
+     });
+-    this.on("error", error => console.error("Room log:", this.id, error.message));
++    this.on("error", error => log.error({ err: error, roomId: this.id }, "Room log failed"));
+     this.logDone = pipeline(this.#log, createWriteStream(join(logDir, this.replayId + ".ndjson")))
+       .catch((error: unknown) => { this.emit("error", error instanceof Error ? error : new Error(String(error))); });
+   }
+@@ -52,10 +53,11 @@ export class Room extends EventEmitter<RoomEvents> {
+   #record<K extends keyof RecordEvents>(type: K, ...args: RecordEvents[K]) {
+     const [data] = args;
+     if (!this.#log.destroyed) this.#log.write({ t: Date.now(), type, ...data });
++    log.info({ roomId: this.id, playerId: data.id, event: type }, "Room event");
+   }
+ 
+   join(player: Player) {
+-    if (this.players.size >= 8 || this.#log.writableLength >= 224) return false;
++    if (this.players.size >= this.maximum || this.#log.writableLength >= 224) return false;
+     this.players.set(player.id, player);
+     const event = { id: player.id, name: player.name };
+     this.#record("join", event);
+@@ -80,7 +82,7 @@ export class Room extends EventEmitter<RoomEvents> {
+   }
+ 
+   summary() {
+-    return { id: this.id, name: this.name, players: this.players.size, replayId: this.replayId, arena: {} };
++    return { id: this.id, name: this.name, players: this.players.size, capacity: this.maximum, replayId: this.replayId, arena: {} };
+   }
+ 
+   close() {
+@@ -94,11 +96,17 @@ export class RoomManager {
+   #closing = new Set<Promise<void>>();
+   logDir: string;
+ 
+-  constructor(logDir: string) { this.logDir = logDir; }
++  constructor(logDir: string, private readonly limit = 16, private readonly players = 8) { this.logDir = logDir; }
++
++  counts() {
++    let players = 0;
++    for (const room of this.#rooms.values()) players += room.players.size;
++    return { rooms: this.#rooms.size, players };
++  }
+ 
+   create(name: string) {
+-    if (this.#rooms.size >= 16) return null;
+-    const room = new Room(name, this.logDir);
++    if (this.#rooms.size >= this.limit) return null;
++    const room = new Room(name, this.logDir, this.players);
+     const expire = setTimeout(() => this.#remove(room), 90_000).unref();
+     room.once("join", () => clearTimeout(expire));
+     room.once("empty", () => this.#remove(room));
+diff --git a/server/ws.ts b/server/ws.ts
+index a9b7a60..486ca7c 100644
+--- a/server/ws.ts
++++ b/server/ws.ts
+@@ -2,11 +2,33 @@ import { randomUUID } from "node:crypto";
+ import { WebSocket, WebSocketServer } from "ws";
+ import { parseClient, rawBuffer, tokenBucket } from "./protocol.ts";
+ import { unreachable, VERSION, ZERO_SEQ, type ClientMessage, type Input, type ServerMessage } from "../shared/protocol.ts";
+-import type { Server } from "node:http";
++import { isIP } from "node:net";
++import type { IncomingMessage, Server } from "node:http";
+ import type { Player, Room, RoomManager } from "./rooms.ts";
+ import { decodeInput } from "../shared/codec.ts";
+ import { Match, matches } from "./match.ts";
+ import { createLink } from "./link.ts";
++import type { readConfig } from "./config.ts";
++import { log } from "./log.ts";
++import { noteRejection, noteTraffic } from "./metrics.ts";
++
++type Policy = Pick<ReturnType<typeof readConfig>, "deployed" | "origins" | "maxIpConnections" | "trustProxy">;
++
++export function acceptOrigin(origin: string | undefined, policy: Policy) {
++  if (!origin) return !policy.deployed && policy.origins.size === 0;
++  if (policy.origins.has(origin)) return true;
++  if (policy.deployed || policy.origins.size) return false;
++  try {
++    const url = new URL(origin);
++    return url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) && url.origin === origin;
++  } catch { return false; }
++}
++
++export function clientAddress(request: IncomingMessage, trustProxy: boolean) {
++  const forwarded = request.headers["x-forwarded-for"];
++  const candidate = typeof forwarded === "string" ? forwarded.split(",").at(-1)?.trim() : undefined;
++  return trustProxy && candidate && isIP(candidate) ? candidate : request.socket.remoteAddress ?? "unknown";
++}
+ 
+ type Message = { [K in ServerMessage["type"]]: Omit<Extract<ServerMessage, { type: K }>, "v"> }[ServerMessage["type"]];
+ 
+@@ -16,7 +38,9 @@ export function send(socket: WebSocket, payload: ArrayBuffer | Message, critical
+     if (critical) socket.close(1013, "Slow client");
+     return;
+   }
+-  socket.send(payload instanceof ArrayBuffer ? payload : JSON.stringify({ v: VERSION, ...payload }));
++  const encoded = payload instanceof ArrayBuffer ? payload : JSON.stringify({ v: VERSION, ...payload });
++  socket.send(encoded);
++  noteTraffic(typeof encoded === "string" ? Buffer.byteLength(encoded) : encoded.byteLength);
+ }
+ 
+ function bindRoom(room: Room) {
+@@ -31,20 +55,43 @@ function bindRoom(room: Room) {
+   });
+ }
+ 
+-export function attachSockets(server: Server, manager: RoomManager, { pingMs = 15_000, joinMs = 5000 } = {}) {
+-  const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 1024, perMessageDeflate: false });
++export function attachSockets(server: Server, manager: RoomManager, policy: Policy, ready: () => boolean) {
++  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false });
++  const counts = new Map<string, number>();
++  server.on("upgrade", (request, socket, head) => {
++    const address = clientAddress(request, policy.trustProxy);
++    const count = counts.get(address) ?? 0;
++    const status = !ready() ? "503 Service Unavailable"
++      : request.url?.split("?")[0] !== "/ws" ? "404 Not Found"
++      : !acceptOrigin(request.headers.origin, policy) ? "403 Forbidden"
++      : count >= policy.maxIpConnections ? "429 Too Many Requests" : null;
++    if (status) {
++      noteRejection();
++      socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
++      return;
++    }
++    wss.handleUpgrade(request, socket, head, client => {
++      counts.set(address, count + 1);
++      client.once("close", () => {
++        const remaining = (counts.get(address) ?? 1) - 1;
++        if (remaining > 0) counts.set(address, remaining);
++        else counts.delete(address);
++      });
++      wss.emit("connection", client, request);
++    });
++  });
+   const bound = new WeakSet<Room>();
+   const missedPongs = new WeakMap<WebSocket, number>();
+-  wss.on("error", error => console.error("WebSocket server:", error.message));
++  wss.on("error", error => log.error({ err: error }, "WebSocket server error"));
+ 
+   wss.on("connection", (socket, request) => {
+     const take = tokenBucket(32, 44);
+-    const link = createLink(request.url);
+-    const deadline = setTimeout(() => socket.close(1008, "Join timeout"), joinMs);
++    const link = createLink(policy.deployed ? undefined : request.url);
++    const deadline = setTimeout(() => socket.close(1008, "Join timeout"), 5000);
+     let session: { room: Room; player: Player } | undefined;
+     missedPongs.set(socket, 0);
+     socket.on("pong", () => { missedPongs.set(socket, 0); });
+-    socket.on("error", error => console.warn("WebSocket:", error.message));
++    socket.on("error", error => log.warn({ err: error, roomId: session?.room.id, playerId: session?.player.id }, "WebSocket error"));
+     socket.on("close", () => {
+       clearTimeout(deadline);
+       link.close();
+@@ -52,15 +99,22 @@ export function attachSockets(server: Server, manager: RoomManager, { pingMs = 1
+     });
+     socket.on("message", (bytes, binary) => {
+       if (socket.readyState !== WebSocket.OPEN) return;
+-      if (!take()) return socket.close(1008, "Rate limit");
++      if (!ready()) return socket.close(1001, "Server stopping");
++      if (!take()) {
++        noteRejection();
++        return socket.close(1008, "Rate limit");
++      }
++      const raw = rawBuffer(bytes);
++      noteTraffic(raw.length);
+       let message: ClientMessage | Input | null;
+       try {
+-        message = binary ? decodeInput(rawBuffer(bytes)) : parseClient(bytes);
++        message = binary ? decodeInput(raw) : parseClient(raw);
+       } catch {
+         message = null;
+       }
+       if (!message) {
+-        console.warn("WebSocket: invalid message");
++        noteRejection();
++        log.warn({ roomId: session?.room.id, playerId: session?.player.id }, "Invalid message");
+         return socket.close(1003, "Invalid message");
+       }
+       const current = session;
+@@ -96,7 +150,7 @@ export function attachSockets(server: Server, manager: RoomManager, { pingMs = 1
+         case "chat":
+           if (!current) break;
+           if (!current.room.chat(current.player, message.text)) {
+-            send(socket, { type: "notice", text: "Журнал зайнятий. Спробуйте ще раз." });
++            send(socket, { type: "notice", text: "Р–СѓСЂРЅР°Р» Р·Р°Р№РЅСЏС‚РёР№. РЎРїСЂРѕР±СѓР№С‚Рµ С‰Рµ СЂР°Р·." });
+           }
+           return;
+         default: return unreachable(message);
+@@ -115,7 +169,7 @@ export function attachSockets(server: Server, manager: RoomManager, { pingMs = 1
+         socket.ping();
+       }
+     }
+-  }, pingMs).unref();
++  }, 15_000).unref();
+   wss.once("close", () => clearInterval(heartbeat));
+   return wss;
+ }
+diff --git a/shared/protocol.ts b/shared/protocol.ts
+index 5e478e4..bf3e634 100644
+--- a/shared/protocol.ts
++++ b/shared/protocol.ts
+@@ -80,6 +80,7 @@ export const serverMessage = z.discriminatedUnion("type", [
+   z.object({ v, type: z.literal("roster"), players: z.array(player) }),
+   player.extend({ v, type: z.literal("chat"), text: boundedString(240) }),
+   z.object({ v, type: z.literal("notice"), text: z.string() }),
++  z.object({ v, type: z.literal("shutdown"), text: z.string() }),
+   z.object({ v, type: z.literal("probe"), nonce: uint32 }),
+ ]);
+ export type ServerMessage = z.infer<typeof serverMessage>;
