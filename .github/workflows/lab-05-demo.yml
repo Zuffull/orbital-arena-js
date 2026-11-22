@@ -1,86 +1,71 @@
-name: Render Lab 05 demo
-on:
-  workflow_dispatch:
+name: Verify and publish Lab 07
+on: workflow_dispatch
 permissions:
   contents: write
 jobs:
-  record:
-    if: github.ref == 'refs/heads/main'
+  lab07:
+    if: github.ref == 'refs/heads/lab-07-upload'
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: upload
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: target
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
-      - name: Build client and install browser
+          node-version-file: target/.nvmrc
+      - name: Apply patch and run unit tests
+        working-directory: target
         run: |
-          npm install --no-save playwright@1.56.1
+          grep -q 'npm run coverage' .github/workflows/typecheck.yml
+          git apply --index --whitespace=fix ../upload/lab07-migration.patch
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run lint
+          npm run coverage
           npm run build
-          npx playwright install --with-deps chromium
-      - name: Record two clients
+      - name: Browser multiplayer check
+        working-directory: target
         run: |
-          mkdir -p demo-frames docs
-          node --input-type=module <<'NODE'
-          import { spawn } from 'node:child_process';
-          import { setTimeout as delay } from 'node:timers/promises';
-          import { chromium } from 'playwright';
-          const origin = 'http://127.0.0.1:38650';
-          const server = spawn(process.execPath, ['server/index.js'], {
-            env: { ...process.env, PORT: '38650' }, stdio: 'inherit',
-          });
-          let browser;
-          try {
-            for (let i = 0; i < 100; i++) {
-              if (await fetch(origin + '/health').then(r => r.ok).catch(() => false)) break;
-              if (i === 99) throw new Error('Server did not become ready');
-              await delay(50);
-            }
-            browser = await chromium.launch({ args: ['--disable-gpu'] });
-            const context = await browser.newContext({ viewport: { width: 515, height: 700 } });
-            const pilots = [];
-            const errors = [];
-            for (const name of ['Alpha', 'Beta']) {
-              const page = await context.newPage();
-              page.on('pageerror', error => errors.push(error));
-              await page.goto(origin + '/?lag=100&jitter=30&loss=2');
-              await page.locator('#load-start').click();
-              await page.getByLabel('Позивний').fill(name);
-              await page.getByRole('button', { name: 'Увійти', exact: true }).click();
-              await page.waitForFunction(() => Number(document.querySelector('#netgraph').dataset.tick) > 0);
-              pilots.push(page);
-            }
-            const [alpha, beta] = pilots;
-            await alpha.getByText('Alpha, Beta', { exact: true }).waitFor();
-            const start = performance.now();
-            for (let frame = 0; frame < 100; frame++) {
-              if (frame % 20 === 0) await Promise.all(pilots.map((page, i) => Promise.all([
-                page.keyboard.down('w'), page.keyboard.down((frame / 20 + i) % 2 ? 'a' : 'd'),
-              ])));
-              if (frame % 20 === 10) await Promise.all(pilots.map(page => Promise.all([
-                page.keyboard.up('a'), page.keyboard.up('d'),
-              ])));
-              if (frame % 20 === 15) await Promise.all(pilots.map(page => page.keyboard.up('w')));
-              if (frame % 6 === 0) await Promise.all([alpha.keyboard.press('Space'), beta.keyboard.press('h')]);
-              const suffix = String(frame + 1).padStart(3, '0') + '.png';
-              await Promise.all([alpha.screenshot({ path: 'demo-frames/a-' + suffix }), beta.screenshot({ path: 'demo-frames/b-' + suffix })]);
-              await delay(Math.max(0, (frame + 1) * 200 - (performance.now() - start)));
-            }
-            if (errors.length) throw errors[0];
-          } finally {
-            await browser?.close();
-            server.kill('SIGTERM');
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+      - name: Record both versions and run the load test
+        working-directory: target
+        run: |
+          set -euo pipefail
+          git worktree add --detach ../baseline lab-06
+          (cd ../baseline && npm install --no-audit --no-fund && npm run build)
+          start_server() {
+            (cd "$1" && exec env PORT=38653 node server/index.ts) > "$RUNNER_TEMP/lab07-server.log" 2>&1 &
+            server_pid=$!
+            for i in {1..50}; do
+              if curl --fail --silent http://127.0.0.1:38653/health; then return; fi
+              sleep .1
+            done
+            cat "$RUNNER_TEMP/lab07-server.log"
+            return 1
           }
-          NODE
-          command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
-          ffmpeg -hide_banner -loglevel error -framerate 5 -i demo-frames/a-%03d.png -framerate 5 -i demo-frames/b-%03d.png \
-            -filter_complex '[0:v]crop=515:685:0:0[a];[1:v]crop=515:685:0:0[b];[a][b]hstack,scale=824:548,split[c][d];[c]palettegen=max_colors=64:stats_mode=diff[p];[d][p]paletteuse=dither=none:diff_mode=rectangle' \
-            -loop 0 docs/lab-05-demo.gif
-      - name: Publish GIF to repository
+          trap 'if [[ -n "${server_pid:-}" ]]; then kill "$server_pid" 2>/dev/null || true; fi; cat "$RUNNER_TEMP/lab07-server.log" 2>/dev/null || true' EXIT
+          export ORIGIN=http://127.0.0.1:38653
+          start_server ../baseline
+          npm run profile -- docs/lab-07-before
+          kill "$server_pid"
+          wait "$server_pid"
+          start_server .
+          npm run profile -- docs/lab-07-after
+          npm run load -- docs/lab-07-load.json
+          node scripts/report.mjs
+      - name: Publish commit and tag
+        working-directory: target
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add docs/lab-05-demo.gif
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'Lab 05: Add 20-second multiplayer demo'
-          git push origin HEAD:main
+          git add README.md docs/lab-07-* package-lock.json
+          git commit -m 'Lab 07: Test determinism and profile runtime performance'
+          git tag -a lab-07 -m 'Lab 07'
+          git push --atomic origin HEAD:refs/heads/main refs/tags/lab-07
