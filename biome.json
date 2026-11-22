@@ -8,6 +8,28 @@
     }
   },
   "linter": {
-    "enabled": true
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "correctness": {
+        "noUnusedImports": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "error",
+        "noDebugger": "error",
+        "noDuplicateObjectKeys": "error"
+      }
+    }
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/coverage",
+      "!**/test-results",
+      "!**/playwright-report",
+      "!**/logs"
+    ]
   }
 }

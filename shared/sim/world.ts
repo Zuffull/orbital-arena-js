@@ -1,6 +1,6 @@
 import { ARENA, wrap } from "./arena.ts";
 import { circlesOverlap, collisionPairs } from "./collision.ts";
-import { Asteroid, Explosion, homing, Pickup, Ship, type SimEntity } from "./entity.ts";
+import { Asteroid, Bullet, Explosion, homing, Pickup, Ship, type SimEntity } from "./entity.ts";
 import { seededRandom } from "../random.ts";
 import { Vector2 } from "./vector.ts";
 
@@ -10,12 +10,26 @@ export type WorldEvent =
   | { type: "fired"; owner: string; id: EntityId }
   | { type: "hit" | "exploded"; target: EntityId };
 
+const turnBullet = homing("ship", 720);
+const emptyInputs: ReadonlyMap<string, Controls> = new Map();
+
 export class World {
   #entities = new Map<EntityId, SimEntity>();
   #nextId = 0;
   #respawns = new Map<string, { remaining: number; score: number }>();
   #events: WorldEvent[] = [];
   #invulnerable = new Map<string, number>();
+  #bullets: Bullet[] = [];
+  #explosions: Explosion[] = [];
+  #updateList: SimEntity[] = [];
+  #takeBullet = () => this.#bullets.pop() ?? new Bullet(new Vector2(), new Vector2(), "");
+
+  #release(entity: SimEntity) {
+    this.#entities.delete(entity.id);
+    if (entity.kind === "bullet" && this.#bullets.length < 256) this.#bullets.push(entity);
+    if (entity.kind === "explosion" && this.#explosions.length < 32) this.#explosions.push(entity);
+  }
+
   random: () => number;
 
   constructor(random = seededRandom(1)) { this.random = random; }
@@ -38,7 +52,7 @@ export class World {
   removePlayer(owner: string) {
     this.#respawns.delete(owner);
     this.#invulnerable.delete(owner);
-    for (const entity of this) if (entity.owner === owner) this.#entities.delete(entity.id);
+    for (const entity of this) if (entity.owner === owner) this.#release(entity);
   }
 
   scoreOf(owner: string) {
@@ -66,7 +80,7 @@ export class World {
     this.spawn(new Pickup(new Vector2(680, 300), ship => ship.protect()));
   }
 
-  step(dt: number, inputs: ReadonlyMap<string, Controls> = new Map()) {
+  step(dt: number, inputs: ReadonlyMap<string, Controls> = emptyInputs) {
     for (const [owner, remaining] of this.#invulnerable) {
       if (remaining <= dt) this.#invulnerable.delete(owner);
       else this.#invulnerable.set(owner, remaining - dt);
@@ -78,30 +92,33 @@ export class World {
         this.#respawns.delete(owner);
       }
     }
-    for (const entity of [...this]) {
+    for (const entity of this) this.#updateList.push(entity);
+    for (const entity of this.#updateList) {
       if (!entity.alive) continue;
       entity.behavior?.(entity, this, dt);
       const input = (entity.owner === undefined ? undefined : inputs.get(entity.owner)) ?? IDLE;
       if (entity.kind === "ship") entity.update(dt, input);
       else entity.update(dt);
       if (entity.kind === "ship" || entity.kind === "bullet") {
-        entity.pos = new Vector2(wrap(entity.pos.x, ARENA.width), wrap(entity.pos.y, ARENA.height));
+        entity.pos.x = wrap(entity.pos.x, ARENA.width);
+        entity.pos.y = wrap(entity.pos.y, ARENA.height);
       }
       if (entity.kind === "ship" && input.fire) {
-        const bullet = entity.fire();
+        const bullet = entity.fire(this.#takeBullet);
         if (bullet) {
           bullet.shotSeq = input.seq ?? ZERO_SEQ;
-          if (input.homing) bullet.behavior = homing("ship", 720);
+          if (input.homing) bullet.behavior = turnBullet;
           this.spawn(bullet);
           this.#events.push({ type: "fired", owner: entity.owner, id: bullet.id });
         }
       }
     }
+    this.#updateList.length = 0;
     for (const [a, b] of collisionPairs(this)) if (a.alive && b.alive) {
       this.#resolve(a, b);
       this.#resolve(b, a);
     }
-    for (const entity of this) if (!entity.alive) this.#entities.delete(entity.id);
+    for (const entity of this) if (!entity.alive) this.#release(entity);
   }
 
   #resolve(a: SimEntity, b: SimEntity) {
@@ -124,7 +141,9 @@ export class World {
     } else if (--target.hp <= 0) this.despawn(target.id);
     if (target.alive) return;
     this.#events.push({ type: "exploded", target: target.id });
-    this.spawn(new Explosion(target.pos, this.random));
+    const explosion = this.#explosions.pop() ?? new Explosion();
+    explosion.reset(target.pos, this.random);
+    this.spawn(explosion);
     for (const ship of this.ofKind("ship")) if (ship.owner === attacker) ship.score++;
     if (target.kind === "ship") this.#respawns.set(target.owner, { remaining: 2, score: target.score });
   }

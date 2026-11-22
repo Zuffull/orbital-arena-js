@@ -17,7 +17,8 @@ export class Match {
   tick = tickNumber.parse(0);
   room: Room;
   send: typeof send;
-  #timings: { duration: number; jitter: number }[] = [];
+  #timings: { duration: number; physics: number; jitter: number }[] = [];
+  #inputs = new Map<string, Controls>();
   #timer;
   #target = performance.now() + period;
 
@@ -43,18 +44,19 @@ export class Match {
 
   step() {
     const start = performance.now();
-    const inputs = new Map<string, Controls>();
+    this.#inputs.clear();
     for (const player of this.room.players.values()) {
-      const first = [...player.inputs.values()].reduce<Input | undefined>((oldest, item) =>
-        !oldest || item.seq < oldest.seq ? item : oldest, undefined);
-      const input = first;
+      let input: Input | undefined;
+      for (const item of player.inputs.values()) if (!input || item.seq < input.seq) input = item;
       if (input) {
         player.inputs.delete(input.seq);
         player.ack = input.seq;
       }
-      inputs.set(player.id, input ?? IDLE);
+      this.#inputs.set(player.id, input ?? IDLE);
     }
-    this.world.step(DT, inputs);
+    const simulationStart = performance.now();
+    this.world.step(DT, this.#inputs);
+    const physics = performance.now() - simulationStart;
     this.world.drainEvents();
     this.tick = tickNumber.parse((this.tick + 1) >>> 0);
     for (const player of this.room.players.values()) {
@@ -66,7 +68,7 @@ export class Match {
       const wire = player.binary ? encodeSnapshot(packet) : packet;
       player.link.schedule(() => this.send(player.socket, wire));
     }
-    this.#timings.push({ duration: performance.now() - start, jitter: Math.abs(start - this.#target) });
+    this.#timings.push({ duration: performance.now() - start, physics, jitter: Math.abs(start - this.#target) });
     if (this.#timings.length > 300) this.#timings.shift();
     this.#target += period;
     if (start - this.#target > period * 4) this.#target = start + period;
@@ -75,8 +77,12 @@ export class Match {
 
   stats() {
     const samples = this.#timings;
-    const mean = (key: "duration" | "jitter") => samples.reduce((sum, value) => sum + value[key], 0) / Math.max(1, samples.length);
+    const mean = (key: "duration" | "jitter" | "physics") => samples.reduce((sum, value) => sum + value[key], 0) / Math.max(1, samples.length);
+    const durations = samples.map(({ duration }) => duration).sort((a, b) => a - b);
     return {
+      p99TickMs: durations[Math.ceil(durations.length * .99) - 1] ?? 0,
+      maxTickMs: durations.at(-1) ?? 0,
+      meanPhysicsMs: mean("physics"),
       room: this.room.id, tick: this.tick, samples: samples.length, intervalMs: period,
       meanTickMs: mean("duration"), meanJitterMs: mean("jitter"), maxJitterMs: Math.max(0, ...samples.map(item => item.jitter)),
     };

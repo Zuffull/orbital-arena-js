@@ -6,13 +6,14 @@ import { entityId, IDLE, ZERO_SEQ, type Controls, type EntityId, type Kind } fro
 import type { World } from "./world.ts";
 
 export type SimEntity = Ship | Bullet | Asteroid | Explosion | Pickup;
+type Point = { x: number; y: number };
 type Behavior = (entity: SimEntity, world: World, dt: number) => void;
 
 export class Entity<K extends Kind> {
   id: EntityId;
   readonly kind: K;
-  pos: Vector2;
-  vel: Vector2;
+  readonly pos: Point;
+  readonly vel: Point;
   angle: number;
   radius: number;
   alive: boolean;
@@ -22,15 +23,18 @@ export class Entity<K extends Kind> {
   constructor(kind: K, pos: Vector2, vel = new Vector2(), radius = 0) {
     this.id = entityId.parse(++Entity.#id);
     this.kind = kind;
-    this.pos = pos;
-    this.vel = vel;
+    this.pos = { x: pos.x, y: pos.y };
+    this.vel = { x: vel.x, y: vel.y };
     this.angle = 0;
     this.radius = radius;
     this.alive = true;
     this.behavior = null;
   }
 
-  update(dt: number) { this.pos = this.pos.add(this.vel.scale(dt)); }
+  update(dt: number) {
+    this.pos.x += this.vel.x * dt;
+    this.pos.y += this.vel.y * dt;
+  }
 }
 
 export class Ship extends Entity<"ship"> {
@@ -62,19 +66,21 @@ export class Ship extends Entity<"ship"> {
       { x: this.pos.x, y: this.pos.y, vx: this.vel.x, vy: this.vel.y, angle: this.angle },
       input, dt,
     );
-    this.pos = new Vector2(ship.x, ship.y);
-    this.vel = new Vector2(ship.vx, ship.vy);
+    this.pos.x = ship.x;
+    this.pos.y = ship.y;
+    this.vel.x = ship.vx;
+    this.vel.y = ship.vy;
     this.angle = ship.angle;
     this.thrust = ship.thrust;
     this.cooldown = Math.max(0, this.cooldown - dt);
   }
 
-  fire() {
+  fire(acquire: () => Bullet = () => new Bullet(new Vector2(), new Vector2(), this.owner)) {
     if (this.cooldown > 0) return null;
     this.cooldown = 0.22;
     const shot = shotFrom({ x: this.pos.x, y: this.pos.y, vx: this.vel.x, vy: this.vel.y, angle: this.angle });
-    const bullet = new Bullet(new Vector2(shot.x, shot.y), new Vector2(shot.vx, shot.vy), this.owner);
-    bullet.angle = this.angle;
+    const bullet = acquire();
+    bullet.reset(shot, this.owner, this.angle);
     return bullet;
   }
 }
@@ -87,6 +93,19 @@ export class Bullet extends Entity<"bullet"> {
   constructor(pos: Vector2, vel: Vector2, owner: string) {
     super("bullet", pos, vel, 4);
     this.owner = owner;
+  }
+
+  reset(shot: Point & { vx: number; vy: number }, owner: string, angle: number) {
+    this.pos.x = shot.x;
+    this.pos.y = shot.y;
+    this.vel.x = shot.vx;
+    this.vel.y = shot.vy;
+    this.owner = owner;
+    this.angle = angle;
+    this.ttl = 0.85;
+    this.shotSeq = ZERO_SEQ;
+    this.behavior = null;
+    this.alive = true;
   }
 
   update(dt: number) {
@@ -110,28 +129,44 @@ export class Asteroid extends Entity<"asteroid"> {
     const limitY = ARENA.height - this.radius;
     const hitX = x < this.radius || x > limitX;
     const hitY = y < this.radius || y > limitY;
-    this.pos = new Vector2(Math.min(limitX, Math.max(this.radius, x)), Math.min(limitY, Math.max(this.radius, y)));
-    this.vel = new Vector2(hitX ? -this.vel.x : this.vel.x, hitY ? -this.vel.y : this.vel.y);
+    this.pos.x = Math.min(limitX, Math.max(this.radius, x));
+    this.pos.y = Math.min(limitY, Math.max(this.radius, y));
+    if (hitX) this.vel.x = -this.vel.x;
+    if (hitY) this.vel.y = -this.vel.y;
     this.angle = wrap(this.angle + dt, Math.PI * 2);
   }
 }
 
 export class Explosion extends Entity<"explosion"> {
   ttl = 0.45;
-  particles: { pos: Vector2; vel: Vector2 }[];
+  readonly particles = Array.from({ length: 12 }, () => ({
+    pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 },
+  }));
 
-  constructor(pos: Vector2, random: () => number) {
-    super("explosion", pos);
-    this.particles = Array.from({ length: 12 }, () => ({
-      pos,
-      vel: Vector2.fromAngle(random() * Math.PI * 2).scale(30 + 150 * random()),
-    }));
+  constructor() { super("explosion", new Vector2()); }
+
+  reset(pos: Point, random: () => number) {
+    this.pos.x = pos.x;
+    this.pos.y = pos.y;
+    this.ttl = 0.45;
+    this.alive = true;
+    for (const particle of this.particles) {
+      const angle = random() * Math.PI * 2;
+      const speed = 30 + 150 * random();
+      particle.pos.x = pos.x;
+      particle.pos.y = pos.y;
+      particle.vel.x = Math.cos(angle) * speed;
+      particle.vel.y = Math.sin(angle) * speed;
+    }
   }
 
   update(dt: number) {
     this.ttl -= dt;
     this.alive = this.ttl > 0;
-    for (const particle of this.particles) particle.pos = particle.pos.add(particle.vel.scale(dt));
+    for (const particle of this.particles) {
+      particle.pos.x += particle.vel.x * dt;
+      particle.pos.y += particle.vel.y * dt;
+    }
   }
 }
 
@@ -146,14 +181,19 @@ export class Pickup extends Entity<"pickup"> {
 
 export function homing(targetKind: Kind, acceleration = 30): Behavior {
   return (entity, world, dt) => {
-    let nearest;
+    let dx = 0, dy = 0;
     let minDistance = Infinity;
     for (const target of world.ofKind(targetKind)) {
       if (!target.alive || target === entity || (entity.owner && target.owner === entity.owner)) continue;
-      const delta = target.pos.sub(entity.pos);
-      const distance = delta.dot(delta);
-      if (distance < minDistance) { minDistance = distance; nearest = delta; }
+      const x = target.pos.x - entity.pos.x, y = target.pos.y - entity.pos.y;
+      const distance = x * x + y * y;
+      if (distance < minDistance) { minDistance = distance; dx = x; dy = y; }
     }
-    if (nearest) entity.vel = entity.vel.add(nearest.normalize().scale(acceleration * dt));
+    const length = Math.hypot(dx, dy);
+    if (length) {
+      const inverse = 1 / length;
+      entity.vel.x += dx * inverse * (acceleration * dt);
+      entity.vel.y += dy * inverse * (acceleration * dt);
+    }
   };
 }

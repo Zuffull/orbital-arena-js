@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import test from "node:test";
-import { decodeInput, decodeSnapshot, encodeInput, encodeSnapshot } from "../shared/codec.ts";
-import { DT, parseClientMessage } from "../shared/protocol.ts";
-import { seededRandom } from "../shared/random.ts";
-import { World } from "../shared/sim/world.ts";
-import { entityState } from "../shared/state.ts";
+import { test } from "vitest";
+import { decodeInput, decodeSnapshot, encodeInput, encodeSnapshot } from "./codec.ts";
+import { DT, parseClientMessage } from "./protocol.ts";
+import { seededRandom } from "./random.ts";
+import { World } from "./sim/world.ts";
+import { entityState } from "./state.ts";
 
 const command = seq => ({ type: "input", seq, turn: seq % 3 - 1, thrust: seq % 4 !== 0,
   fire: seq % 6 === 0, homing: seq % 17 === 0 });

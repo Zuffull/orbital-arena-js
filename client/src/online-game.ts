@@ -1,5 +1,5 @@
 import { DT, sequence as inputSequence, tickNumber, ZERO_SEQ, type EntityId, type Input, type Seq, type SnapshotEntity } from "../../shared/protocol.ts";
-import { wrapShip } from "../../shared/sim/arena.ts";
+import { ARENA, wrap, wrapShip } from "../../shared/sim/arena.ts";
 import { createInput } from "./input.ts";
 import { createLoop } from "./loop.ts";
 import { advance, delta, snapshots } from "./prediction.ts";
@@ -100,7 +100,10 @@ export function startOnline(connection: Connection, drawEntity: RenderSprite, so
     for (const [seq, bullet] of bullets) {
       bullet.life -= dt;
       if (bullet.life <= 0) bullets.delete(seq);
-      else bullets.set(seq, wrapShip({ ...bullet, x: bullet.x + bullet.vx * dt, y: bullet.y + bullet.vy * dt }));
+      else {
+        bullet.x = wrap(bullet.x + bullet.vx * dt, ARENA.width);
+        bullet.y = wrap(bullet.y + bullet.vy * dt, ARENA.height);
+      }
     }
     if (!ship || !predict) return;
     const next = advance(ship, input);
@@ -129,9 +132,11 @@ export function startOnline(connection: Connection, drawEntity: RenderSprite, so
     drawArena(ctx);
     const now = performance.now();
     const delay = Number(slider.value);
-    for (const entity of history.at(now - delay)) {
-      if (!entity.self) paint(ctx, entity);
-    }
+    const remote = history.at(now - delay);
+    const opponent = remote.find(entity => entity.kind === "ship" && !entity.self);
+    graph.dataset.remoteX = opponent?.x.toFixed(3) ?? "";
+    graph.dataset.remoteY = opponent?.y.toFixed(3) ?? "";
+    for (const entity of remote) if (!entity.self) paint(ctx, entity);
     for (const entity of history.at(now)) {
       if (entity.self && entity.kind !== "ship") paint(ctx, entity);
     }

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="325" viewBox="0 0 700 325" font-family="system-ui">
+<rect width="700" height="325" rx="8" fill="#172237"/>
+<text x="30" y="32" fill="white" font-size="18">Server tick under WebSocket load (ms)</text>
+<path d="M75 53V260H642" fill="none" stroke="#b1bdd0"/>
+<path d="M75 63.94117647058823H642" stroke="#f6a97e" stroke-dasharray="5 5"/>
+<text x="80" y="58.94117647058823" fill="#f6a97e" font-size="12">33 ms</text>
+<polyline points="90,257.3437712941561 265,258.0407901176278 440,257.9094069411607 615,257.92312511765" fill="none" stroke="#75defa" stroke-width="3"/><polyline points="90,256.43104023533243 265,257.8402754117316 440,257.075301411738 615,257.40713988235973" fill="none" stroke="#ffee90" stroke-width="3"/>
+<text x="90" y="280" fill="white" text-anchor="middle">8</text><circle cx="90" cy="256.43104023533243" r="4" fill="#ffee90"/><circle cx="90" cy="257.3437712941561" r="4" fill="#75defa"/><text x="265" y="280" fill="white" text-anchor="middle">32</text><circle cx="265" cy="257.8402754117316" r="4" fill="#ffee90"/><circle cx="265" cy="258.0407901176278" r="4" fill="#75defa"/><text x="440" y="280" fill="white" text-anchor="middle">64</text><circle cx="440" cy="257.075301411738" r="4" fill="#ffee90"/><circle cx="440" cy="257.9094069411607" r="4" fill="#75defa"/><text x="615" y="280" fill="white" text-anchor="middle">128</text><circle cx="615" cy="257.40713988235973" r="4" fill="#ffee90"/><circle cx="615" cy="257.92312511765" r="4" fill="#75defa"/>
+<text x="85" y="307" fill="#75defa">p99 tick</text><text x="185" y="307" fill="#ffee90">max tick</text><text x="530" y="307" fill="white">Clients</text></svg>
