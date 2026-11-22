@@ -53,6 +53,8 @@ jobs:
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           for i in {1..50}; do if curl -fsS http://127.0.0.1:38663/ready; then break; fi; sleep .2; done
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
           node scripts/record-release.mjs
           ffprobe -v error -show_entries format=duration -of default=nw=1 docs/lab-08-demo.mp4
           cat lab08-readme.md >> README.md
