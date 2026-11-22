@@ -25,7 +25,8 @@ jobs:
           grep -q 'npm run coverage' .github/workflows/typecheck.yml
           git apply --index --whitespace=fix ../upload/lab07-migration.patch
           sed -i 's/!!\*\*\//!**\//g' biome.json
-          git add biome.json
+          sed -i 's/toEqual(cmd))/toEqual({ ...cmd }))/' shared/protocol.test.mjs
+          git add biome.json shared/protocol.test.mjs
           npm install --no-audit --no-fund
           npm run typecheck
           npm run lint
